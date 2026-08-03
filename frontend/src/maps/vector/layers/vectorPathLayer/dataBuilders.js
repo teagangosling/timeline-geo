@@ -6,6 +6,7 @@ import {
   buildHighlightedTripData,
   createEmptyHighlightedTripData
 } from '@/maps/shared/highlightedTripData'
+import { densifyLongHops } from '@/maps/shared/greatCircle' // FORK
 
 const createEmptyHighlightedData = () => ({
   lineCollection: createFeatureCollection([]),
@@ -36,10 +37,18 @@ export const buildPathCollection = (pathData) => {
   const features = []
 
   ;(Array.isArray(pathData) ? pathData : []).forEach((pathGroup, pathIndex) => {
-    const coordinates = normalizePathCoordinates(pathGroup)
-    if (coordinates.length < 2) {
+    const rawCoordinates = normalizePathCoordinates(pathGroup)
+    if (rawCoordinates.length < 2) {
       return
     }
+
+    // FORK: Google Timeline records a flight as a single start/end pair, so
+    // upstream drew a straight lat/lng line - which is not the route taken, and
+    // which sweeps the wrong way round the world when it crosses the
+    // antimeridian. Long hops become great-circle arcs; short segments are left
+    // exactly as they were. `pathRaw` below still carries the original points,
+    // so hover and inspect report real GPS fixes, not interpolated ones.
+    const coordinates = densifyLongHops(rawCoordinates)
 
     features.push({
       type: 'Feature',

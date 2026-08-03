@@ -15,6 +15,7 @@ import { createHighlightedPathStartMarker, createHighlightedPathEndMarker } from
 import { useTimezone } from '@/composables/useTimezone'
 import '@/maps/shared/styles/mapPopupContent.css'
 import { buildTripHoverTooltipHtml } from '@/maps/shared/popupContentBuilders'
+import { densifyLongHops } from '@/maps/shared/greatCircle' // FORK
 import MapInfoPopup from '@/maps/shared/popups/MapInfoPopup.vue'
 import { mountMapPopup } from '@/maps/shared/popups/mountMapPopup'
 import {
@@ -147,7 +148,13 @@ const renderPaths = () => {
   if (!hasPathData.value) return
 
   props.pathData.forEach((pathGroup, groupIndex) => {
-    const latlngs = pathGroup.map(point => [point.latitude, point.longitude])
+    // FORK: same great-circle densification as the vector layer, so both render
+    // modes draw a flight as an arc instead of a straight line across
+    // continents that wraps the wrong way at the antimeridian. densifyLongHops
+    // works in [lng, lat]; Leaflet wants [lat, lng].
+    const latlngs = densifyLongHops(
+      pathGroup.map(point => [point.longitude, point.latitude])
+    ).map(([lng, lat]) => [lat, lng])
     const basePathOptions = hasFocusedHighlightedTrip.value
       ? {
           ...props.pathOptions,
