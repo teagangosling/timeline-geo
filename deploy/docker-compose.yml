@@ -73,11 +73,17 @@ services:
       geopulse-postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8080/api/health || exit 1"]
-      interval: 5s
-      timeout: 3s
+      # busybox wget, not curl: the JVM runtime image (eclipse-temurin alpine)
+      # has no curl, so upstream's curl-based probe can never succeed here and
+      # the container sits "unhealthy" forever while the app is perfectly fine -
+      # which in turn blocks geopulse-ui, whose depends_on requires health.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
       retries: 30
-      start_period: 30s
+      # A cold JVM start with Flyway migrations to run takes a while; without a
+      # generous start_period the retries are burned before the app is up.
+      start_period: 60s
 
   geopulse-ui:
     build:
