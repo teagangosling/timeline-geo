@@ -18,6 +18,20 @@ GRANT CONNECT ON DATABASE geopulse TO geopulse_ro;
 GRANT USAGE  ON SCHEMA public TO geopulse_ro;
 GRANT SELECT ON timeline_stays, timeline_trips, gps_points, city_photos TO geopulse_ro;
 
+-- favorite_locations is granted at COLUMN level, deliberately.
+--
+-- The public app redacts a radius around every favorite from published trip
+-- geometry (PUBLIC_REDACT_M), because clipping trip ends does not hide a home
+-- address: idling near home adds path length without distance, and a drive-by
+-- trip has no endpoint to trim. Doing that needs the shapes.
+--
+-- It does NOT need the names, and "Home" / "Work" / "Mum's" are exactly what
+-- this whole design exists to keep off the internet. A column grant gives the
+-- geometry and nothing else: SELECT name FROM favorite_locations still fails
+-- with permission denied for this role, so a future bug in public_stats.py
+-- cannot publish a label even if it tries to.
+GRANT SELECT (id, user_id, geometry) ON favorite_locations TO geopulse_ro;
+
 
 -- ---------------------------------------------------------------------------
 -- No ALTER DEFAULT PRIVILEGES. On purpose.
@@ -44,11 +58,13 @@ GRANT SELECT ON timeline_stays, timeline_trips, gps_points, city_photos TO geopu
 --                               OwnTracks/Overland credentials) in the clear.
 --   system_settings             holds the Google Places API key - a billable
 --                               credential.
---   favorite_locations          the user-assigned names ("Home", "Work",
---                               "Mum's") are precisely what the public view
---                               exists to hide. Note timeline_stays.favorite_id
---                               is readable, but it is only an opaque integer
---                               and public_stats.py never selects it.
+--   favorite_locations.name     (and .city/.country) - the user-assigned names
+--                               ("Home", "Work", "Mum's") are precisely what
+--                               the public view exists to hide. Only the
+--                               geometry columns are granted, above. Note
+--                               timeline_stays.favorite_id is readable, but it
+--                               is an opaque integer and public_stats.py never
+--                               selects it.
 --   reverse_geocoding_location  full display_name strings, i.e. street
 --                               addresses for every stay. Granting this would
 --                               undo the offline-reverse-geocoder design in
@@ -64,11 +80,12 @@ GRANT SELECT ON timeline_stays, timeline_trips, gps_points, city_photos TO geopu
 -- oidc_providers, audit_log, user_invitations, friend_invitations,
 -- user_friends, timeline_notes.
 --
--- The four granted tables are the minimum the public app needs:
---   timeline_stays   coordinates only, blurred to nearest city before output
---   timeline_trips   distance + movement type + geometry (ends clipped)
---   gps_points       trip-path reconstruction and the "last updated" footer
---   city_photos      Wikimedia imagery cache (read-only; tools/ writes it)
+-- The granted tables are the minimum the public app needs:
+--   timeline_stays      coordinates only, blurred to nearest city before output
+--   timeline_trips      distance + movement type + geometry (ends clipped)
+--   gps_points          trip-path reconstruction and the "last updated" footer
+--   city_photos         Wikimedia imagery cache (read-only; tools/ writes it)
+--   favorite_locations  geometry columns ONLY, to subtract redaction zones
 
 -- ---------------------------------------------------------------------------
 -- Re-run this file after every migration
