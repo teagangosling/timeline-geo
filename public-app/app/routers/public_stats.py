@@ -26,6 +26,7 @@ GeoPulse is multi-user, so **every** statement below filters
 every account on the instance.
 """
 import json
+import math
 from datetime import date
 
 from fastapi import APIRouter, Query
@@ -34,7 +35,7 @@ from sqlalchemy import text
 from ..activity_type import normalize_activity_type
 from ..city_photos import get_city_photo
 from ..date_range import date_range_bounds
-from ..db import PUBLIC_TRIP_CLIP_M, PUBLIC_USER_ID, engine
+from ..db import PUBLIC_REDACT_M, PUBLIC_TRIP_CLIP_M, PUBLIC_USER_ID, engine
 from ..geo_country import countries_for, nearest_cities
 from ..great_circle import great_circle_points
 from ..iso_countries import COUNTRY_NAMES
@@ -88,9 +89,30 @@ _STAY_LOCATIONS_IN_RANGE = text(
 # store path in DB"); nothing in the Java tree calls setPath any more, so on
 # a modern install the column is NULL for every row. Rebuilding in SQL keeps
 # the raw fixes in the database - only the clipped result crosses the wire.
+#
+# End-clipping alone is NOT sufficient to keep private addresses off the map,
+# which is why `redaction` below exists as well. Two ways it leaks:
+#
+#   1. clip_frac trims a fraction of the line's *length*, but a car idling or
+#      manoeuvring near home accumulates path length without ever getting
+#      further away, and stationary GPS jitter does the same. Measured on real
+#      data, 500m of trimmed path still left vertices 4m from the house.
+#   2. A trip that merely drives past home has no endpoint there at all, so
+#      end-clipping cannot touch it.
+#
+# So every published line also has a buffer around each of the user's favorite
+# locations subtracted from it. That covers both cases with one rule, and any
+# place marked as a favorite later is redacted automatically. Buffering is done
+# on ::geography so the radius is real metres rather than degrees.
 _TRIPS_IN_RANGE = text(
     f"""
-    WITH trips AS (
+    WITH redaction AS (
+        SELECT ST_Union(
+                   ST_Buffer(f.geometry::geography, :redact_m)::geometry
+               ) AS zone
+        FROM favorite_locations f
+        WHERE f.user_id = :uid
+    ), trips AS (
         SELECT timestamp,
                trip_duration,
                distance_meters,
@@ -129,9 +151,17 @@ _TRIPS_IN_RANGE = text(
                 AND GeometryType(line) = 'LINESTRING'
                 AND ST_NumPoints(line) >= 2
                 AND ST_Length(line) > 0
-               THEN ST_AsGeoJSON(ST_LineSubstring(line, clip_frac, 1 - clip_frac))
+               THEN ST_AsGeoJSON(
+                        CASE
+                            WHEN r.zone IS NULL
+                                THEN ST_LineSubstring(line, clip_frac, 1 - clip_frac)
+                            ELSE ST_Difference(
+                                     ST_LineSubstring(line, clip_frac, 1 - clip_frac),
+                                     r.zone)
+                        END)
            END AS geojson
     FROM lines
+    CROSS JOIN redaction r
     ORDER BY timestamp
     """
 )
@@ -140,6 +170,23 @@ _TRIPS_IN_RANGE = text(
 # ledger, and the newest GPS fix is the same thing the footer wanted to
 # convey ("data is current as of ..."). A timestamp, not a location.
 _LAST_POINT = text("SELECT MAX(timestamp) AS last_updated FROM gps_points WHERE user_id = :uid")
+
+# Redaction circles for the great-circle fallback, which is built in Python and
+# so cannot use the ST_Difference above. Returns one centre + radius per
+# favorite: radius is the favorite's own extent plus the redaction distance, so
+# an AREA favorite is covered, not just its centre point.
+_REDACTION_CIRCLES = text(
+    """
+    SELECT ST_Y(ST_Centroid(geometry)) AS lat,
+           ST_X(ST_Centroid(geometry)) AS lng,
+           :redact_m + COALESCE(
+               ST_MaxDistance(geometry::geometry, geometry::geometry)
+                   * cos(radians(ST_Y(ST_Centroid(geometry)))) * 111320 / 2,
+               0) AS radius_m
+    FROM favorite_locations
+    WHERE user_id = :uid
+    """
+)
 
 
 def _clip_points(points: list[tuple[float, float]], clip_frac: float) -> list[tuple[float, float]]:
@@ -152,6 +199,20 @@ def _clip_points(points: list[tuple[float, float]], clip_frac: float) -> list[tu
     cut = int(n * clip_frac)
     trimmed = points[cut : n - cut]
     return trimmed if len(trimmed) >= 2 else points
+
+
+def _in_redaction_zone(lat: float, lng: float, circles: list[tuple[float, float, float]]) -> bool:
+    """True if (lat, lng) falls inside any favorite's redaction circle.
+
+    Only for the great-circle fallback: real geometry has the zone subtracted by
+    ST_Difference in SQL. Equirectangular approximation is plenty here - the
+    circles are a few hundred metres and the arc points are kilometres apart."""
+    for clat, clng, radius_m in circles:
+        dlat = math.radians(lat - clat)
+        dlng = math.radians(lng - clng) * math.cos(math.radians((lat + clat) / 2))
+        if math.hypot(dlat, dlng) * 6371000 <= radius_m:
+            return True
+    return False
 
 
 @router.get("/last-updated")
@@ -188,7 +249,16 @@ async def public_stats(
     async with engine.connect() as conn:
         mode_rows = (await conn.execute(_DISTANCE_AND_MODE, window)).all()
         stay_rows = (await conn.execute(_STAY_LOCATIONS_IN_RANGE, window)).all()
-        trip_rows = (await conn.execute(_TRIPS_IN_RANGE, {**window, "clip_m": PUBLIC_TRIP_CLIP_M})).all()
+        trip_rows = (await conn.execute(
+            _TRIPS_IN_RANGE,
+            {**window, "clip_m": PUBLIC_TRIP_CLIP_M, "redact_m": PUBLIC_REDACT_M},
+        )).all()
+        redaction_circles = [
+            (row.lat, row.lng, row.radius_m)
+            for row in (await conn.execute(
+                _REDACTION_CIRCLES, {"uid": PUBLIC_USER_ID, "redact_m": PUBLIC_REDACT_M}
+            )).all()
+        ]
 
     distance_by_mode: dict[str, float] = {}
     for row in mode_rows:
@@ -223,8 +293,34 @@ async def public_stats(
     trip_features = []
     for trip in trip_rows:
         if trip.geojson:
-            # Already [lng, lat] and already clipped, straight from PostGIS.
-            coordinates = json.loads(trip.geojson)["coordinates"]
+            # Already [lng, lat], already clipped and redacted, straight from
+            # PostGIS. Subtracting the redaction zone splits any line that
+            # crosses it, so this is a MultiLineString whenever a trip passed
+            # near a favorite - each surviving piece becomes its own feature,
+            # leaving a visible gap where the redacted area was.
+            geom = json.loads(trip.geojson)
+            if geom["type"] == "MultiLineString":
+                parts = geom["coordinates"]
+            elif geom["type"] == "LineString":
+                parts = [geom["coordinates"]]
+            else:
+                # GeometryCollection/Point/empty: a trip that lay entirely
+                # inside the redaction zone. Nothing publishable survives.
+                parts = []
+            for part in parts:
+                if len(part) < 2:
+                    continue
+                trip_features.append(
+                    {
+                        "type": "Feature",
+                        "geometry": {"type": "LineString", "coordinates": part},
+                        "properties": {
+                            "activity_type": normalize_activity_type(trip.movement_type),
+                            "distance_m": trip.distance_meters,
+                        },
+                    }
+                )
+            continue
         else:
             # No usable geometry (no stored path, and no GPS fixes in the
             # window - typically a flight). Draw the great circle between the
@@ -233,7 +329,13 @@ async def public_stats(
             arc = great_circle_points(
                 trip.start_lat, trip.start_lng, trip.end_lat, trip.end_lng
             )
-            coordinates = [[lng, lat] for lat, lng in _clip_points(arc, trip.clip_frac)]
+            # Same redaction rule as the SQL path, applied here because this arc
+            # is synthesised in Python and never existed as a PostGIS geometry.
+            coordinates = [
+                [lng, lat]
+                for lat, lng in _clip_points(arc, trip.clip_frac)
+                if not _in_redaction_zone(lat, lng, redaction_circles)
+            ]
         if len(coordinates) < 2:
             continue
         trip_features.append(

@@ -44,4 +44,13 @@ PUBLIC_USER_ID = str(uuid.UUID(_require("PUBLIC_USER_ID")))
 # "no exact coordinates" claim was only partly true. See routers/public_stats.
 PUBLIC_TRIP_CLIP_M = float(os.environ.get("PUBLIC_TRIP_CLIP_M", "500"))
 
+# Radius blanked out around every favorite location before any trip line is
+# published. End-clipping alone does not keep a home address off the map:
+# idling or GPS jitter near home adds path length without adding distance
+# (measured on real data - 500m of trimmed path still ended 4m from the house),
+# and a trip that merely drives past home has no endpoint there to trim.
+# Subtracting a zone around each favorite covers both cases, and any place
+# marked as a favorite later is redacted automatically. Set to 0 to disable.
+PUBLIC_REDACT_M = float(os.environ.get("PUBLIC_REDACT_M", "500"))
+
 engine = create_async_engine(DATABASE_URL, pool_pre_ping=True)
