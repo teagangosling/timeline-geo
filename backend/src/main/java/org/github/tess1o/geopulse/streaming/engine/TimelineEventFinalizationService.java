@@ -16,6 +16,7 @@ import org.github.tess1o.geopulse.streaming.service.trips.TripWaterClassificatio
 import org.github.tess1o.geopulse.streaming.service.trips.TripWaterStatistics;
 // FORK: Google Timeline placeID naming
 import org.github.tess1o.geopulse.geocoding.googleplaces.service.GooglePlaceNameResolver;
+import org.github.tess1o.geopulse.gps.merge.GoogleSyntheticPointFilter; // FORK (WS-2)
 import org.github.tess1o.geopulse.streaming.service.googleplace.GooglePlaceIdStayResolver;
 import org.locationtech.jts.geom.Point;
 
@@ -241,7 +242,10 @@ public class TimelineEventFinalizationService {
      * @return finalized trip event
      */
     public Trip finalizeTrip(UserState userState, TimelineConfig config) {
-        List<GPSPoint> tripPath = userState.copyActivePoints();
+        // FORK (WS-2): drop synthetic Google visit-centroid points before measuring anything. See
+        // GoogleSyntheticPointFilter. Applied to the whole path rather than only to the geometry so
+        // distance, GPS statistics and travel-mode classification all see the same real fixes.
+        List<GPSPoint> tripPath = withoutSyntheticVisitPoints(userState.copyActivePoints());
 
         if (tripPath.size() < 2) {
             log.warn("Cannot finalize trip - insufficient path points: {}", tripPath.size());
@@ -284,6 +288,9 @@ public class TimelineEventFinalizationService {
         if (endPoint != null) {
             tripPath.add(endPoint);
         }
+        // FORK (WS-2): as in finalizeTrip. A gap-inferred trip is especially exposed to this - the
+        // span between two visits is often nothing BUT visit centroids.
+        tripPath = withoutSyntheticVisitPoints(tripPath);
 
         if (tripPath.isEmpty()) {
             log.warn("Cannot finalize trip - no path points");
@@ -309,6 +316,27 @@ public class TimelineEventFinalizationService {
                 .distanceMeters(totalDistance)
                 .tripType(tripType)
                 .build();
+    }
+
+    /**
+     * FORK (WS-2): strip synthetic Google visit-centroid points from a trip path.
+     *
+     * <p>Measured on a real 10-year import, leaving them in produced trips of 189,543 km with a
+     * straight-line displacement of 7 km. The cause is that Google exports can contain two visits
+     * covering the SAME time range in different cities; the parser synthesises a 5-minute point
+     * series for each, they interleave at identical timestamps, and the path ping-pongs between
+     * them - in that case Victoria and Toronto, roughly 3,400 km apart, 24 times an hour.
+     *
+     * <p>Falls back to the unfiltered path when filtering would leave too little to measure, so a
+     * stretch consisting only of visit centroids still yields a trip rather than disappearing. Such
+     * a trip is inherently a straight-line guess between two stays, which is what it always was.
+     */
+    private List<GPSPoint> withoutSyntheticVisitPoints(List<GPSPoint> tripPath) {
+        List<GPSPoint> filtered = GoogleSyntheticPointFilter.excludeSyntheticVisitPoints(tripPath);
+        if (filtered.size() >= 2) {
+            return filtered;
+        }
+        return tripPath;
     }
 
     /**

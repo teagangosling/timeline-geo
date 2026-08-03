@@ -11,22 +11,39 @@ What it deliberately never returns:
   :func:`geo_country.nearest_cities` and are discarded. What leaves the
   process is the *city's own* coordinates, from an offline dataset. A visit
   is therefore blurred to "nearest known city".
-* **trip endpoints.** Published trip lines are trimmed by
-  ``PUBLIC_TRIP_CLIP_M`` metres at each end. The retired app returned whole
-  tracks, which begin and end on the user's driveway; its "no exact
-  coordinates" property was only ever true of stays, not trips.
+* **trip geometry, at all.** No route lines are published. See below.
 
 None of the above is the actual security boundary, though - the boundary is
 that this process connects as a SELECT-only Postgres role that has been
-granted four tables and nothing else (``db/grants-public-ro.sql``). The
+granted three tables and nothing else (``db/grants-public-ro.sql``). The
 filtering here is defence in depth on top of that.
+
+Why there are no trip lines
+---------------------------
+Earlier versions published route geometry with two mitigations, and neither
+worked:
+
+1. *Trimming ``PUBLIC_TRIP_CLIP_M`` metres from each end.* Trimming removes a
+   fraction of the line's **length**, but idling and GPS jitter near home
+   accumulate length without displacement. Measured on the real dataset, 500 m
+   of trimmed path still ended 4 m from the house, and 788 published trips
+   passed within 200 m of it - many of them simple drive-bys with no endpoint
+   there to trim at all.
+2. *Subtracting a redaction circle around every favourite.* This did remove the
+   points, and made things worse: a perfectly circular hole centred on the
+   house is a bullseye. It does not conceal the address, it advertises it, and
+   the radius tells you how big the secret is.
+
+The failure is not in the tuning, it is in the premise: a route track is a
+record of a private routine, and any geometry detailed enough to be worth
+drawing is detailed enough to locate a home. So the map shows *where* - the
+cities and countries visited - and never *how you got there*. Aggregate
+distance by travel mode is still published; it reveals nothing positional.
 
 GeoPulse is multi-user, so **every** statement below filters
 ``user_id = :uid`` (``PUBLIC_USER_ID``). An unfiltered query would publish
 every account on the instance.
 """
-import json
-import math
 from datetime import date
 
 from fastapi import APIRouter, Query
@@ -35,9 +52,8 @@ from sqlalchemy import text
 from ..activity_type import normalize_activity_type
 from ..city_photos import get_city_photo
 from ..date_range import date_range_bounds
-from ..db import PUBLIC_REDACT_M, PUBLIC_TRIP_CLIP_M, PUBLIC_USER_ID, engine
+from ..db import PUBLIC_USER_ID, engine
 from ..geo_country import countries_for, nearest_cities
-from ..great_circle import great_circle_points
 from ..iso_countries import COUNTRY_NAMES
 
 router = APIRouter(prefix="/api", tags=["public-stats"])
@@ -75,144 +91,23 @@ _STAY_LOCATIONS_IN_RANGE = text(
     """
 )
 
-# Trip lines, clipped and serialised entirely inside Postgres so untrimmed
-# geometry never reaches this process.
+# No trip geometry is published - see the module docstring. Trips are still read
+# for the aggregate distance-by-mode figures, which carry no positional
+# information: a total of kilometres walked says nothing about where.
 #
-# `clip_frac` is PUBLIC_TRIP_CLIP_M as a fraction of the trip's length,
-# capped at 0.4: on a trip shorter than 2 x the clip distance an uncapped
-# fraction would exceed 0.5, and ST_LineSubstring with start > end returns
-# empty - short trips would silently vanish from the map instead of merely
-# being trimmed. The cap means a very short trip keeps its middle 20%.
-#
-# `path` is COALESCEd with a line rebuilt from gps_points because upstream
-# stopped populating it in 1.3.0 (TimelineTripEntity: "Since 1.3.0 we don't
-# store path in DB"); nothing in the Java tree calls setPath any more, so on
-# a modern install the column is NULL for every row. Rebuilding in SQL keeps
-# the raw fixes in the database - only the clipped result crosses the wire.
-#
-# End-clipping alone is NOT sufficient to keep private addresses off the map,
-# which is why `redaction` below exists as well. Two ways it leaks:
-#
-#   1. clip_frac trims a fraction of the line's *length*, but a car idling or
-#      manoeuvring near home accumulates path length without ever getting
-#      further away, and stationary GPS jitter does the same. Measured on real
-#      data, 500m of trimmed path still left vertices 4m from the house.
-#   2. A trip that merely drives past home has no endpoint there at all, so
-#      end-clipping cannot touch it.
-#
-# So every published line also has a buffer around each of the user's favorite
-# locations subtracted from it. That covers both cases with one rule, and any
-# place marked as a favorite later is redacted automatically. Buffering is done
-# on ::geography so the radius is real metres rather than degrees.
-_TRIPS_IN_RANGE = text(
-    f"""
-    WITH redaction AS (
-        SELECT ST_Union(
-                   ST_Buffer(f.geometry::geography, :redact_m)::geometry
-               ) AS zone
-        FROM favorite_locations f
-        WHERE f.user_id = :uid
-    ), trips AS (
-        SELECT timestamp,
-               trip_duration,
-               distance_meters,
-               movement_type,
-               path,
-               ST_Y(start_point) AS start_lat, ST_X(start_point) AS start_lng,
-               ST_Y(end_point)   AS end_lat,   ST_X(end_point)   AS end_lng,
-               LEAST(
-                   0.4,
-                   CASE WHEN distance_meters > 0
-                        THEN :clip_m / distance_meters::double precision
-                        ELSE 0.4
-                   END
-               ) AS clip_frac
-        FROM timeline_trips
-        WHERE user_id = :uid AND {_OVERLAPS_TRIP}
-    ), lines AS (
-        SELECT t.*,
-               COALESCE(
-                   t.path,
-                   (SELECT ST_MakeLine(g.coordinates ORDER BY g.timestamp)
-                    FROM gps_points g
-                    WHERE g.user_id = :uid
-                      AND g.timestamp >= t.timestamp
-                      AND g.timestamp <= t.timestamp
-                                       + make_interval(secs => t.trip_duration))
-               ) AS line
-        FROM trips t
-    )
-    SELECT movement_type,
-           distance_meters,
-           start_lat, start_lng, end_lat, end_lng,
-           clip_frac,
-           CASE
-               WHEN line IS NOT NULL
-                AND GeometryType(line) = 'LINESTRING'
-                AND ST_NumPoints(line) >= 2
-                AND ST_Length(line) > 0
-               THEN ST_AsGeoJSON(
-                        CASE
-                            WHEN r.zone IS NULL
-                                THEN ST_LineSubstring(line, clip_frac, 1 - clip_frac)
-                            ELSE ST_Difference(
-                                     ST_LineSubstring(line, clip_frac, 1 - clip_frac),
-                                     r.zone)
-                        END)
-           END AS geojson
-    FROM lines
-    CROSS JOIN redaction r
-    ORDER BY timestamp
-    """
-)
+# This query replaced one that rebuilt each route from gps_points, clipped its
+# ends and subtracted redaction circles. Deleting it removed the public app's
+# only reason to read gps_points and favorite_locations at all, so both were
+# revoked from the read-only role (db/grants-public-ro.sql). The safest handling
+# of route data turned out to be not fetching it.
 
 # Stands in for the retired app's `ingests` table: GeoPulse has no import
-# ledger, and the newest GPS fix is the same thing the footer wanted to
-# convey ("data is current as of ..."). A timestamp, not a location.
-_LAST_POINT = text("SELECT MAX(timestamp) AS last_updated FROM gps_points WHERE user_id = :uid")
-
-# Redaction circles for the great-circle fallback, which is built in Python and
-# so cannot use the ST_Difference above. Returns one centre + radius per
-# favorite: radius is the favorite's own extent plus the redaction distance, so
-# an AREA favorite is covered, not just its centre point.
-_REDACTION_CIRCLES = text(
-    """
-    SELECT ST_Y(ST_Centroid(geometry)) AS lat,
-           ST_X(ST_Centroid(geometry)) AS lng,
-           :redact_m + COALESCE(
-               ST_MaxDistance(geometry::geometry, geometry::geometry)
-                   * cos(radians(ST_Y(ST_Centroid(geometry)))) * 111320 / 2,
-               0) AS radius_m
-    FROM favorite_locations
-    WHERE user_id = :uid
-    """
-)
-
-
-def _clip_points(points: list[tuple[float, float]], clip_frac: float) -> list[tuple[float, float]]:
-    """Drop `clip_frac` of a point list from each end, keeping at least two
-    points. Used only on the great-circle fallback below; real geometry is
-    clipped by ST_LineSubstring in SQL."""
-    n = len(points)
-    if n < 3 or clip_frac <= 0:
-        return points
-    cut = int(n * clip_frac)
-    trimmed = points[cut : n - cut]
-    return trimmed if len(trimmed) >= 2 else points
-
-
-def _in_redaction_zone(lat: float, lng: float, circles: list[tuple[float, float, float]]) -> bool:
-    """True if (lat, lng) falls inside any favorite's redaction circle.
-
-    Only for the great-circle fallback: real geometry has the zone subtracted by
-    ST_Difference in SQL. Equirectangular approximation is plenty here - the
-    circles are a few hundred metres and the arc points are kilometres apart."""
-    for clat, clng, radius_m in circles:
-        dlat = math.radians(lat - clat)
-        dlng = math.radians(lng - clng) * math.cos(math.radians((lat + clat) / 2))
-        if math.hypot(dlat, dlng) * 6371000 <= radius_m:
-            return True
-    return False
+# ledger, and the newest stay is the same thing the footer wanted to convey
+# ("data is current as of ..."). A timestamp, not a location.
+#
+# Reads timeline_stays rather than gps_points: with route geometry gone, the
+# raw-fix table is no longer granted to this role at all.
+_LAST_POINT = text("SELECT MAX(timestamp) AS last_updated FROM timeline_stays WHERE user_id = :uid")
 
 
 @router.get("/last-updated")
@@ -249,16 +144,6 @@ async def public_stats(
     async with engine.connect() as conn:
         mode_rows = (await conn.execute(_DISTANCE_AND_MODE, window)).all()
         stay_rows = (await conn.execute(_STAY_LOCATIONS_IN_RANGE, window)).all()
-        trip_rows = (await conn.execute(
-            _TRIPS_IN_RANGE,
-            {**window, "clip_m": PUBLIC_TRIP_CLIP_M, "redact_m": PUBLIC_REDACT_M},
-        )).all()
-        redaction_circles = [
-            (row.lat, row.lng, row.radius_m)
-            for row in (await conn.execute(
-                _REDACTION_CIRCLES, {"uid": PUBLIC_USER_ID, "redact_m": PUBLIC_REDACT_M}
-            )).all()
-        ]
 
     distance_by_mode: dict[str, float] = {}
     for row in mode_rows:
@@ -290,64 +175,11 @@ async def public_stats(
         key=lambda c: c["name"],
     )
 
-    trip_features = []
-    for trip in trip_rows:
-        if trip.geojson:
-            # Already [lng, lat], already clipped and redacted, straight from
-            # PostGIS. Subtracting the redaction zone splits any line that
-            # crosses it, so this is a MultiLineString whenever a trip passed
-            # near a favorite - each surviving piece becomes its own feature,
-            # leaving a visible gap where the redacted area was.
-            geom = json.loads(trip.geojson)
-            if geom["type"] == "MultiLineString":
-                parts = geom["coordinates"]
-            elif geom["type"] == "LineString":
-                parts = [geom["coordinates"]]
-            else:
-                # GeometryCollection/Point/empty: a trip that lay entirely
-                # inside the redaction zone. Nothing publishable survives.
-                parts = []
-            for part in parts:
-                if len(part) < 2:
-                    continue
-                trip_features.append(
-                    {
-                        "type": "Feature",
-                        "geometry": {"type": "LineString", "coordinates": part},
-                        "properties": {
-                            "activity_type": normalize_activity_type(trip.movement_type),
-                            "distance_m": trip.distance_meters,
-                        },
-                    }
-                )
-            continue
-        else:
-            # No usable geometry (no stored path, and no GPS fixes in the
-            # window - typically a flight). Draw the great circle between the
-            # endpoints instead of a straight lat/lng line, then clip it the
-            # same way so the endpoints stay hidden.
-            arc = great_circle_points(
-                trip.start_lat, trip.start_lng, trip.end_lat, trip.end_lng
-            )
-            # Same redaction rule as the SQL path, applied here because this arc
-            # is synthesised in Python and never existed as a PostGIS geometry.
-            coordinates = [
-                [lng, lat]
-                for lat, lng in _clip_points(arc, trip.clip_frac)
-                if not _in_redaction_zone(lat, lng, redaction_circles)
-            ]
-        if len(coordinates) < 2:
-            continue
-        trip_features.append(
-            {
-                "type": "Feature",
-                "geometry": {"type": "LineString", "coordinates": coordinates},
-                "properties": {
-                    "activity_type": normalize_activity_type(trip.movement_type),
-                    "distance_m": trip.distance_meters,
-                },
-            }
-        )
+    # `trips` stays in the response as an empty FeatureCollection rather than
+    # being removed: public-web/app.js reads it unconditionally, and the shape
+    # is the retired app's contract. Nothing is published into it - see the
+    # module docstring for why route geometry cannot be made safe by trimming.
+    trip_features: list = []
 
     return {
         "distance_km": total_km,

@@ -169,11 +169,8 @@ services:
       PUBLIC_USER_ID: ${PUBLIC_USER_ID}
       # Metres trimmed from each end of every published trip line, so shared
       # geometry never terminates at a doorstep.
-      PUBLIC_TRIP_CLIP_M: ${PUBLIC_TRIP_CLIP_M:-500}
-      # Radius blanked out around every favorite (Home, Work, ...) in published
-      # trip geometry. End-clipping alone does not hide an address - see
-      # public-app/app/db.py.
-      PUBLIC_REDACT_M: ${PUBLIC_REDACT_M:-500}
+      # No PUBLIC_TRIP_CLIP_M / PUBLIC_REDACT_M: route geometry is not
+      # published at all, so there is nothing to trim or redact.
       TILE_STYLE_URL: ${TILE_STYLE_URL}
     networks:
       - default

@@ -39,18 +39,11 @@ DATABASE_URL = _require("DATABASE_URL")
 # asyncpg cast error on the first request.
 PUBLIC_USER_ID = str(uuid.UUID(_require("PUBLIC_USER_ID")))
 
-# Metres trimmed from each end of every published trip line. The retired app
-# returned full tracks, which start and end on the user's driveway - so its
-# "no exact coordinates" claim was only partly true. See routers/public_stats.
-PUBLIC_TRIP_CLIP_M = float(os.environ.get("PUBLIC_TRIP_CLIP_M", "500"))
-
-# Radius blanked out around every favorite location before any trip line is
-# published. End-clipping alone does not keep a home address off the map:
-# idling or GPS jitter near home adds path length without adding distance
-# (measured on real data - 500m of trimmed path still ended 4m from the house),
-# and a trip that merely drives past home has no endpoint there to trim.
-# Subtracting a zone around each favorite covers both cases, and any place
-# marked as a favorite later is redacted automatically. Set to 0 to disable.
-PUBLIC_REDACT_M = float(os.environ.get("PUBLIC_REDACT_M", "500"))
+# PUBLIC_TRIP_CLIP_M and PUBLIC_REDACT_M used to live here, tuning how route
+# geometry was trimmed and how large a hole was punched around each favourite.
+# Both are gone: no route geometry is published at all now. Trimming did not
+# hide the house (idling adds path length without displacement), and the hole
+# was worse than the leak - a circle centred on the address is a bullseye.
+# See routers/public_stats for the full reasoning.
 
 engine = create_async_engine(DATABASE_URL, pool_pre_ping=True)

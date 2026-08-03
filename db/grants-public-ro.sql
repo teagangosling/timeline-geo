@@ -16,21 +16,18 @@ CREATE ROLE geopulse_ro LOGIN PASSWORD :'ro_password';
 
 GRANT CONNECT ON DATABASE geopulse TO geopulse_ro;
 GRANT USAGE  ON SCHEMA public TO geopulse_ro;
-GRANT SELECT ON timeline_stays, timeline_trips, gps_points, city_photos TO geopulse_ro;
+GRANT SELECT ON timeline_stays, timeline_trips, city_photos TO geopulse_ro;
 
--- favorite_locations is granted at COLUMN level, deliberately.
+-- Neither gps_points nor favorite_locations is granted any more.
 --
--- The public app redacts a radius around every favorite from published trip
--- geometry (PUBLIC_REDACT_M), because clipping trip ends does not hide a home
--- address: idling near home adds path length without distance, and a drive-by
--- trip has no endpoint to trim. Doing that needs the shapes.
+-- Both were needed only to build published route lines: gps_points to rebuild
+-- the track, favorite_locations (geometry columns only) to subtract a redaction
+-- zone from it. Route geometry is no longer published at all, so both grants
+-- were revoked. Dropping a capability turned out to be the only mitigation that
+-- actually worked - see public-app/app/routers/public_stats.py.
 --
--- It does NOT need the names, and "Home" / "Work" / "Mum's" are exactly what
--- this whole design exists to keep off the internet. A column grant gives the
--- geometry and nothing else: SELECT name FROM favorite_locations still fails
--- with permission denied for this role, so a future bug in public_stats.py
--- cannot publish a label even if it tries to.
-GRANT SELECT (id, user_id, geometry) ON favorite_locations TO geopulse_ro;
+-- If they were ever re-granted, gps_points is every raw fix ever recorded, at
+-- full precision. That is the most sensitive table in the database.
 
 
 -- ---------------------------------------------------------------------------
@@ -49,6 +46,13 @@ GRANT SELECT (id, user_id, geometry) ON favorite_locations TO geopulse_ro;
 -- ---------------------------------------------------------------------------
 -- Tables that must NEVER be granted to geopulse_ro
 -- ---------------------------------------------------------------------------
+--   gps_points                  every raw GPS fix at full precision. Formerly
+--                               granted to rebuild route lines; revoked once
+--                               those stopped being published.
+--   favorite_locations          user-assigned names ("Home", "Work", "Mum's")
+--                               are exactly what this view exists to hide. The
+--                               geometry columns were briefly granted for
+--                               redaction; revoked with the same change.
 --   users                       password hashes, email addresses, the UUID->
 --                               person mapping this whole design exists to
 --                               avoid publishing.
@@ -58,13 +62,6 @@ GRANT SELECT (id, user_id, geometry) ON favorite_locations TO geopulse_ro;
 --                               OwnTracks/Overland credentials) in the clear.
 --   system_settings             holds the Google Places API key - a billable
 --                               credential.
---   favorite_locations.name     (and .city/.country) - the user-assigned names
---                               ("Home", "Work", "Mum's") are precisely what
---                               the public view exists to hide. Only the
---                               geometry columns are granted, above. Note
---                               timeline_stays.favorite_id is readable, but it
---                               is an opaque integer and public_stats.py never
---                               selects it.
 --   reverse_geocoding_location  full display_name strings, i.e. street
 --                               addresses for every stay. Granting this would
 --                               undo the offline-reverse-geocoder design in
@@ -81,18 +78,17 @@ GRANT SELECT (id, user_id, geometry) ON favorite_locations TO geopulse_ro;
 -- user_friends, timeline_notes.
 --
 -- The granted tables are the minimum the public app needs:
---   timeline_stays      coordinates only, blurred to nearest city before output
---   timeline_trips      distance + movement type + geometry (ends clipped)
---   gps_points          trip-path reconstruction and the "last updated" footer
---   city_photos         Wikimedia imagery cache (read-only; tools/ writes it)
---   favorite_locations  geometry columns ONLY, to subtract redaction zones
+--   timeline_stays   coordinates, blurred to the nearest city before output,
+--                    plus MAX(timestamp) for the "last updated" footer
+--   timeline_trips   distance and movement type only - no geometry is read
+--   city_photos      Wikimedia imagery cache (read-only; tools/ writes it)
 
 -- ---------------------------------------------------------------------------
 -- Re-run this file after every migration
 -- ---------------------------------------------------------------------------
 -- Flyway runs as the read-write user, so tables it creates are owned by that
 -- user and carry no grant for geopulse_ro. If a migration DROPs and recreates
--- one of the four tables above (upstream has done exactly this - see
+-- one of the granted tables above (upstream has done exactly this - see
 -- V3.0.0's column rewrites), the grant is lost with the old table and the
 -- public app starts returning 500s on "permission denied for table ...".
 -- Re-running this file (minus CREATE ROLE) is idempotent and cheap.
