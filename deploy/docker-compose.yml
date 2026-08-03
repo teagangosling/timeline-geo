@@ -67,6 +67,18 @@ services:
       # Off by default in code because it is billable. The migrated place-name
       # cache means almost every lookup is a cache hit, not a request.
       GEOPULSE_GOOGLE_PLACES_ENABLED: ${GEOPULSE_GOOGLE_PLACES_ENABLED:-false}
+      # Upstream ships FLIGHT and TRAIN classification off, and gap-trip
+      # inference off. With all three off, a flight is not a trip at all: the
+      # two ends land in different continents, the span becomes a data gap, and
+      # the map draws nothing between them - an implied teleport. Turning on
+      # gap-trip inference makes that span a real trip; turning on FLIGHT makes
+      # it classified as one rather than UNKNOWN.
+      GEOPULSE_TIMELINE_FLIGHT_ENABLED: ${GEOPULSE_TIMELINE_FLIGHT_ENABLED:-true}
+      GEOPULSE_TIMELINE_TRAIN_ENABLED: ${GEOPULSE_TIMELINE_TRAIN_ENABLED:-true}
+      GEOPULSE_TIMELINE_GAP_TRIP_INFERENCE_ENABLED: ${GEOPULSE_TIMELINE_GAP_TRIP_INFERENCE_ENABLED:-true}
+      # A long-haul flight plus airport time routinely exceeds the 24h default,
+      # which would send it back to being a data gap.
+      GEOPULSE_TIMELINE_GAP_TRIP_INFERENCE_MAX_GAP_HOURS: ${GEOPULSE_TIMELINE_GAP_TRIP_INFERENCE_MAX_GAP_HOURS:-36}
     volumes:
       - ./keys:/app/keys
       - ./import-drop:/data/geopulse-import
