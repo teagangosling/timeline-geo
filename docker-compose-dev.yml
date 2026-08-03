@@ -11,7 +11,9 @@ services:
   geopulse-backend-dev:
     build:
       context: .
-      dockerfile: backend/Dockerfile.native
+      # FORK: JVM build instead of native - a GraalVM compile per dev iteration costs
+      # minutes and upstream publishes :jvm-latest, so this is a supported runtime.
+      dockerfile: backend/Dockerfile
     container_name: geopulse-backend-dev
     restart: unless-stopped
     user: "1000:1000"

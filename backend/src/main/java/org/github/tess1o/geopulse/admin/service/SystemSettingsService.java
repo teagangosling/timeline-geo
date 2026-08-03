@@ -242,6 +242,17 @@ public class SystemSettingsService {
                 new SettingDefinition("geopulse.ai.chat-memory.max-messages", "10", ValueType.INTEGER, "ai", "Maximum number of messages to keep in conversation history per user"));
         SETTING_DEFINITIONS.put("ai.tool-result.max-length",
                 new SettingDefinition("geopulse.ai.tool-result.max-length", "12000", ValueType.INTEGER, "ai", "Maximum characters in tool results (prevents token limit errors)"));
+
+        // FORK (WS-2): cross-source GPS merge. Appended at the end of the block on purpose - it
+        // keeps the merge diff away from upstream's high-churn middle. See gps.merge package.
+        SETTING_DEFINITIONS.put("gps.source-priority",
+                new SettingDefinition("geopulse.gps.source-priority",
+                        "GOOGLE_TIMELINE,HOME_ASSISTANT,MOBILE_APP,OWNTRACKS,GPSLOGGER,OVERLAND,TRACCAR,DAWARICH,GPX,GEOJSON,CSV,COLOTA,MANUAL",
+                        ValueType.STRING, "gps",
+                        "GPS source precedence for cross-source merge, highest first (CSV of GpsSourceType names)"));
+        SETTING_DEFINITIONS.put("gps.merge.min-segment-buckets",
+                new SettingDefinition("geopulse.gps.merge.min-segment-buckets", "3", ValueType.INTEGER, "gps",
+                        "Minimum authoritative-source run length in 5-minute buckets (hysteresis; 3 = 15 minutes)"));
     }
 
     @Inject

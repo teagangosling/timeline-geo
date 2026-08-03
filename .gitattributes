@@ -1,0 +1,25 @@
+# FORK: upstream ships no .gitattributes. On a Windows checkout with
+# core.autocrlf=true, git rewrites these shell scripts with CRLF line endings.
+# Both are copied into Linux images and executed, so the CRLF breaks the shebang
+# and the container dies with a confusing error:
+#
+#     exec /usr/local/bin/geopulse: no such file or directory
+#
+# (the file exists - it is the "\r" on the "#!/bin/sh" line that cannot be
+# resolved). ./mvnw fails the same way with "cannot execute: required file not
+# found". Forcing LF on every shell script makes a Windows-built image work.
+
+*.sh            text eol=lf
+mvnw            text eol=lf
+backend/src/main/docker/geopulse text eol=lf
+
+# Keep the Windows launcher as CRLF - it is only ever run by cmd.exe.
+mvnw.cmd        text eol=crlf
+
+# Never let git touch binary assets.
+*.png           binary
+*.jpg           binary
+*.gif           binary
+*.ico           binary
+*.geojson       -text
+*.tgz           binary

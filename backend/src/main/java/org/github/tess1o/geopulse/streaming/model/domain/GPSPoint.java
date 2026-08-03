@@ -27,6 +27,13 @@ public class GPSPoint implements GpsPoint {
     private double accuracy; // GPS accuracy in meters
     private Boolean onWater; // nullable when environmental evidence has not been calculated
 
+    // FORK (WS-2): true for the points StreamingGoogleTimelineParser synthesises every 5 minutes at
+    // a Google "visit" centroid. Sourced from the generated column gps_points.google_visit_synthetic
+    // (V90.0.0). These are not real fixes: they must stay in stay detection, but must be excluded
+    // from trip path geometry and distance. See gps.merge.GoogleSyntheticPointFilter.
+    // Field is appended last so the Lombok @AllArgsConstructor keeps its existing prefix ordering.
+    private boolean googleVisitSynthetic;
+
     public GPSPoint(double latitude, double longitude, double speed, double accuracy, Instant timestamp) {
         this.latitude = latitude;
         this.longitude = longitude;

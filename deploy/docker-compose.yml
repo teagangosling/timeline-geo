@@ -1,0 +1,190 @@
+# Production stack for this fork, replacing the retired bespoke timeline stack.
+#
+# Differs from upstream's docker-compose.yml in four ways:
+#   1. Backend and UI are BUILT FROM SOURCE, not pulled - the whole point of the
+#      fork is code upstream doesn't have.
+#   2. The JVM Dockerfile is used, not Dockerfile.native. Upstream publishes
+#      :jvm-latest, so this is a supported runtime, and it avoids a multi-minute
+#      GraalVM compile on every deploy.
+#   3. Adds `public-app`, the unauthenticated read-only aggregate view, which
+#      connects with a SELECT-only Postgres role. See public-app/README.md.
+#   4. Adds `deploy-webhook`, carried over from the retired stack.
+#
+# Only the services that need to be reachable through the Cloudflare Tunnel join
+# the external nginx-reverse-proxy network. Postgres deliberately does not - it
+# is reachable only on the internal default network.
+#
+# Container names on the shared proxy network must be globally unique across
+# every stack on this host. A generic name like "db" previously collided with
+# another stack's MySQL and traffic was routed to the wrong container.
+
+services:
+  geopulse-keygen:
+    image: alpine:latest
+    container_name: geopulse-keygen
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./keys:/keys
+    command:
+      - sh
+      - -ec
+      - |
+        set -e
+        mkdir -p /keys
+        if [ ! -f /keys/jwt-private-key.pem ] || [ ! -f /keys/jwt-public-key.pem ]; then
+          command -v openssl >/dev/null 2>&1 || apk add --no-cache openssl
+          openssl genpkey -algorithm RSA -out /keys/jwt-private-key.pem
+          openssl rsa -pubout -in /keys/jwt-private-key.pem -out /keys/jwt-public-key.pem
+          chmod 644 /keys/jwt-private-key.pem /keys/jwt-public-key.pem
+        fi
+        if [ ! -f /keys/ai-encryption-key.txt ]; then
+          command -v openssl >/dev/null 2>&1 || apk add --no-cache openssl
+          openssl rand -base64 32 > /keys/ai-encryption-key.txt
+          chmod 644 /keys/ai-encryption-key.txt
+        fi
+
+  geopulse-backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    image: timeline-geo-backend:local
+    container_name: geopulse-backend
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1g
+    mem_reservation: 256m
+    env_file:
+      - .env
+    environment:
+      GEOPULSE_POSTGRES_URL: jdbc:postgresql://${GEOPULSE_POSTGRES_HOST}:${GEOPULSE_POSTGRES_PORT}/${GEOPULSE_POSTGRES_DB}
+      # Billable secret. Deliberately an env var rather than a row in
+      # system_settings: that table is admin-panel editable and rides along in
+      # every database dump. See FORK.md.
+      GEOPULSE_GOOGLE_PLACES_API_KEY: ${GEOPULSE_GOOGLE_PLACES_API_KEY}
+    volumes:
+      - ./keys:/app/keys
+      - ./import-drop:/data/geopulse-import
+    depends_on:
+      geopulse-keygen:
+        condition: service_completed_successfully
+      geopulse-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/api/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+
+  geopulse-ui:
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+    image: timeline-geo-ui:local
+    container_name: geopulse-ui
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    env_file:
+      - .env
+    depends_on:
+      geopulse-backend:
+        condition: service_healthy
+    networks:
+      - default
+      - nginx-reverse-proxy
+
+  geopulse-postgres:
+    image: postgis/postgis:17-3.5
+    container_name: geopulse-postgres
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      POSTGRES_USER: ${GEOPULSE_POSTGRES_USERNAME}
+      POSTGRES_PASSWORD: ${GEOPULSE_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${GEOPULSE_POSTGRES_DB}
+    volumes:
+      - geopulse-db-data:/var/lib/postgresql/data
+    command: >
+      postgres
+      -c timezone=UTC
+      -c shared_buffers=${GEOPULSE_POSTGRES_SHARED_BUFFERS:-256MB}
+      -c work_mem=${GEOPULSE_POSTGRES_WORK_MEM:-8MB}
+      -c maintenance_work_mem=${GEOPULSE_POSTGRES_MAINTENANCE_WORK_MEM:-64MB}
+      -c effective_cache_size=${GEOPULSE_POSTGRES_EFFECTIVE_CACHE_SIZE:-1GB}
+      -c max_wal_size=${GEOPULSE_POSTGRES_MAX_WAL_SIZE:-512MB}
+      -c log_min_duration_statement=${GEOPULSE_POSTGRES_LOG_SLOW_QUERIES:-5000}
+      -c track_io_timing=on
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${GEOPULSE_POSTGRES_USERNAME} -d ${GEOPULSE_POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Unauthenticated, internet-reachable on its own Cloudflare hostname with NO
+  # Access policy. Connects as geopulse_ro, a SELECT-only role (see
+  # db/grants-public-ro.sql), so even a bug or injection here cannot write, and
+  # cannot read favorite_locations, gps_source_config, system_settings or users.
+  # If the read-only credentials are missing this container must fail to start
+  # rather than fall back to the read-write user - that is intentional.
+  public-app:
+    build:
+      context: ../public-app
+    image: timeline-geo-public-app:local
+    container_name: geopulse-public-app
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      geopulse-postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${GEOPULSE_POSTGRES_RO_USER}:${GEOPULSE_POSTGRES_RO_PASSWORD}@${GEOPULSE_POSTGRES_HOST}:${GEOPULSE_POSTGRES_PORT}/${GEOPULSE_POSTGRES_DB}
+      # GeoPulse is multi-user; every public query is scoped to this one user.
+      PUBLIC_USER_ID: ${PUBLIC_USER_ID}
+      # Metres trimmed from each end of every published trip line, so shared
+      # geometry never terminates at a doorstep.
+      PUBLIC_TRIP_CLIP_M: ${PUBLIC_TRIP_CLIP_M:-500}
+      TILE_STYLE_URL: ${TILE_STYLE_URL}
+    networks:
+      - default
+      - nginx-reverse-proxy
+
+  # Listens for the GitHub push webhook via the Cloudflare Tunnel and rebuilds
+  # on a push to the fork's default branch. Talks to the host docker daemon
+  # through the mounted socket (docker-outside-of-docker), so builds run on the
+  # host rather than inside this container.
+  deploy-webhook:
+    build:
+      context: ../deploy-webhook
+    container_name: geopulse-deploy-webhook
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    user: "${DEPLOY_WEBHOOK_UID:-1000}:${DEPLOY_WEBHOOK_GID:-1000}"
+    group_add:
+      - "${DOCKER_SOCK_GID:-110}"
+    environment:
+      WEBHOOK_SECRET: ${DEPLOY_WEBHOOK_SECRET}
+    volumes:
+      - ..:/repo
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Read-only deploy key in its own directory, deliberately not the host
+      # user's ~/.ssh, so this container never sees the admin key used to reach
+      # this host in the first place.
+      - ${DEPLOY_WEBHOOK_SSH_DIR:-./deploy-webhook-ssh}:/home/deploy/.ssh:ro
+    networks:
+      - default
+      - nginx-reverse-proxy
+
+volumes:
+  geopulse-db-data:
+
+networks:
+  default:
+  nginx-reverse-proxy:
+    external: true

@@ -14,6 +14,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap; // FORK: telemetry payload for Google placeID
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -174,6 +175,22 @@ public class GoogleTimelineImportStrategy extends BaseGpsImportStrategy {
             // Set altitude if available (already in meters)
             if (point.getAltitude() != null) {
                 gpsEntity.setAltitude(point.getAltitude());
+            }
+
+            // FORK: carry Google's visit placeID into the telemetry jsonb column. The
+            // google_place_id / google_visit_synthetic generated columns (V90.0.0) read straight
+            // out of it, so the import SQL needs no changes at all. googleVisitSynthetic is stored
+            // as the string "true" to match the generated-column expression, which compares text
+            // rather than casting to boolean.
+            LinkedHashMap<String, Object> telemetry = new LinkedHashMap<>();
+            if (point.getPlaceId() != null && !point.getPlaceId().isBlank()) {
+                telemetry.put("googlePlaceId", point.getPlaceId());
+            }
+            if (point.isSyntheticVisitPoint()) {
+                telemetry.put("googleVisitSynthetic", "true");
+            }
+            if (!telemetry.isEmpty()) {
+                gpsEntity.setTelemetry(telemetry);
             }
 
             return gpsEntity;

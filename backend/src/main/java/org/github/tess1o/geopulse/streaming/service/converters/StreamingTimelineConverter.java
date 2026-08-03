@@ -67,6 +67,7 @@ public class StreamingTimelineConverter {
         entity.setStayDuration(stay.getDuration().toSeconds()); // Already in seconds
         entity.setLocationName(stay.getLocationName());
         entity.setLocationSource(getLocationSource(stay));
+        entity.setGooglePlaceId(stay.getGooglePlaceId()); // FORK: persist the winning Google placeID
 
         // Set favorite location reference using pre-loaded map (O(1) lookup)
         if (stay.getFavoriteId() != null && stay.getFavoriteId() != 0) {
@@ -236,6 +237,12 @@ public class StreamingTimelineConverter {
     private LocationSource getLocationSource(Stay stay) {
         if (stay.getFavoriteId() != null && stay.getFavoriteId() != 0) {
             return LocationSource.FAVORITE;
+        }
+        // FORK: a Google Places name sits below an explicit favorite but above the geocoder chain.
+        // googlePlaceId is only ever set when the Google name actually won, so no extra comparison
+        // against locationName is needed here.
+        if (stay.getGooglePlaceId() != null && !stay.getGooglePlaceId().isBlank()) {
+            return LocationSource.GOOGLE_PLACE;
         }
         if (stay.getGeocodingId() != null && stay.getGeocodingId() != 0) {
             return LocationSource.GEOCODING;

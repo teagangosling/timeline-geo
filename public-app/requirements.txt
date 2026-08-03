@@ -1,0 +1,12 @@
+# Trimmed to what public-app/app actually imports. The retired app's
+# api/requirements.txt also carried geoalchemy2, python-multipart, ijson,
+# timezonefinder, httpx, curl_cffi and tzdata - all of them for ingest,
+# snapping, timezone lookup or the Wikimedia fetcher, none of which exist
+# here. In particular curl_cffi is gone because the city-photo *fetch* moved
+# to tools/fetch_city_photos.py; this app only reads the cache table.
+fastapi>=0.115
+uvicorn[standard]>=0.32
+sqlalchemy>=2.0        # raw text() queries only - no ORM models, no geoalchemy2
+asyncpg>=0.30
+shapely>=2.0           # geo_country: point-in-polygon against Natural Earth borders
+reverse_geocoder>=1.5  # geo_country: offline nearest-city lookup (pulls numpy/scipy)

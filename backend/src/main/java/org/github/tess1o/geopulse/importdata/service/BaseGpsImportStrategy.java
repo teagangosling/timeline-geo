@@ -3,6 +3,7 @@ package org.github.tess1o.geopulse.importdata.service;
 import jakarta.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
 import org.github.tess1o.geopulse.admin.service.SystemSettingsService;
+import org.github.tess1o.geopulse.gps.merge.GpsSourceMergeService; // FORK (WS-2)
 import org.github.tess1o.geopulse.importdata.model.ImportJob;
 import org.github.tess1o.geopulse.shared.exportimport.ExportImportConstants;
 import org.github.tess1o.geopulse.user.model.UserEntity;
@@ -37,6 +38,10 @@ public abstract class BaseGpsImportStrategy implements ImportStrategy {
 
     @Inject
     protected SystemSettingsService settingsService;
+
+    // FORK (WS-2): cross-source reconciliation, see gps/merge/GpsSourceMergeService.
+    @Inject
+    protected GpsSourceMergeService gpsSourceMergeService;
     
     @Override
     public List<String> validateAndDetectDataTypes(ImportJob job) throws IOException {
@@ -135,6 +140,26 @@ public abstract class BaseGpsImportStrategy implements ImportStrategy {
             // Use timestamp from validation, or fall back to streaming result
             if (firstTimestamp == null) {
                 firstTimestamp = result.firstTimestamp;
+            }
+
+            // FORK (WS-2): reconcile sources over the imported range BEFORE timeline generation.
+            // Ordering is load-bearing: timeline generation reads gps_points with "AND NOT
+            // suppressed", so the flags must be settled first or the run uses stale winners.
+            // Hooked here rather than in BatchProcessor, which is per-batch and would thrash.
+            // A failure here must not fail the import - an unreconciled range is degraded
+            // (interleaved sources) but still usable, and the nightly scheduler will retry it.
+            if (result.imported > 0 && firstTimestamp != null) {
+                Instant reconcileTo = job.getDataLastTimestamp() != null
+                        ? job.getDataLastTimestamp()
+                        : Instant.now();
+                try {
+                    gpsSourceMergeService.reconcile(user.getId(), firstTimestamp, reconcileTo);
+                } catch (Exception e) {
+                    log.error("Source reconciliation failed for import {} over {} to {}; " +
+                                    "timeline will be generated from unreconciled points and the " +
+                                    "nightly merge will correct it: {}",
+                            job.getJobId(), firstTimestamp, reconcileTo, e.getMessage(), e);
+                }
             }
 
             // Update progress to 70% FIRST, before blocking timeline trigger

@@ -319,13 +319,21 @@ public class GpsPointRepository implements PanacheRepository<GpsPointEntity> {
                 ? "AND (gp.timestamp > :cursorTimestamp OR (gp.timestamp = :cursorTimestamp AND gp.id > :cursorId)) "
                 : "";
 
+        // FORK (WS-2): "AND NOT gp.suppressed" hides points that lost cross-source reconciliation
+        // (see gps.merge.GpsSourceMergeService). This is the timeline-generation point loader, the
+        // only query that filters on the flag - raw-point map, export and friends/live-location
+        // queries keep returning everything.
+        // FORK (WS-1/WS-2): google_visit_synthetic marks the synthetic Google visit-centroid points;
+        // they stay in stay detection but are excluded from trip distance downstream.
         Query query = getEntityManager().createNativeQuery(
                         "SELECT gp.timestamp as timestamp_utc, ST_Y(gp.coordinates) as latitude, ST_X(gp.coordinates) as longitude, " +
                                 "COALESCE(gp.velocity, 0.0) / 3.6 as speed, COALESCE(gp.accuracy, 0.0) as accuracy, " +
-                                environmentSelect + ", gp.id as gps_point_id " +
+                                environmentSelect + ", gp.id as gps_point_id, " +
+                                "COALESCE(gp.google_visit_synthetic, false) as google_visit_synthetic " +
                                 "FROM gps_points gp " +
                                 environmentJoin +
                                 "WHERE gp.user_id = :userId AND gp.timestamp >= :fromTimestamp " +
+                                "AND NOT gp.suppressed " +
                                 cursorPredicate +
                                 "ORDER BY gp.timestamp ASC, gp.id ASC " +
                                 "LIMIT :limit")
@@ -363,13 +371,19 @@ public class GpsPointRepository implements PanacheRepository<GpsPointEntity> {
                 ? ""
                 : "LEFT JOIN gps_point_environment env ON env.gps_point_id = gp.id AND env.environment_dataset_version = :environmentDatasetVersion ";
 
+        // FORK (WS-2): same reconciliation filter as findEssentialDataChunk. This loader feeds
+        // merged-trip statistics recalculation and water classification, both part of timeline
+        // generation, so it must see exactly the same point set the streaming pass saw.
+        // gp.id and google_visit_synthetic are selected so both loaders share one row layout.
         Query query = getEntityManager().createNativeQuery(
                         "SELECT gp.timestamp as timestamp_utc, ST_Y(gp.coordinates) as latitude, ST_X(gp.coordinates) as longitude, " +
                                 "COALESCE(gp.velocity, 0.0) / 3.6 as speed, COALESCE(gp.accuracy, 0.0) as accuracy, " +
-                                environmentSelect +
+                                environmentSelect + ", gp.id as gps_point_id, " +
+                                "COALESCE(gp.google_visit_synthetic, false) as google_visit_synthetic " +
                                 "FROM gps_points gp " +
                                 environmentJoin +
                                 "WHERE gp.user_id = :userId AND gp.timestamp >= :start AND gp.timestamp <= :end " +
+                                "AND NOT gp.suppressed " +
                                 "ORDER BY gp.timestamp ASC, gp.id ASC")
                 .setParameter("userId", userId)
                 .setParameter("start", start)
@@ -407,7 +421,7 @@ public class GpsPointRepository implements PanacheRepository<GpsPointEntity> {
 
     /**
      * Map native SQL result array to GPSPoint object.
-     * Expected array: [timestamp, latitude, longitude, speed, accuracy, onWater, id?]
+     * Expected array: [timestamp, latitude, longitude, speed, accuracy, onWater, id?, googleVisitSynthetic?]
      */
     private GPSPoint mapToGPSPoint(Object[] row) {
         Instant timestampInstant = TimestampUtils.getInstantSafe(row[0]);
@@ -423,6 +437,10 @@ public class GpsPointRepository implements PanacheRepository<GpsPointEntity> {
         gpsPoint.setOnWater(onWater);
         if (row.length > 6 && row[6] != null) {
             gpsPoint.setId(((Number) row[6]).longValue());
+        }
+        // FORK (WS-2): synthetic Google visit-centroid marker, excluded from trip distance.
+        if (row.length > 7 && row[7] != null) {
+            gpsPoint.setGoogleVisitSynthetic(Boolean.TRUE.equals(row[7]));
         }
         return gpsPoint;
     }

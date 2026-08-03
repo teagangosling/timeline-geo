@@ -14,6 +14,9 @@ import org.github.tess1o.geopulse.streaming.service.trips.TravelClassification;
 import org.github.tess1o.geopulse.streaming.service.trips.TripGpsStatistics;
 import org.github.tess1o.geopulse.streaming.service.trips.TripWaterClassificationService;
 import org.github.tess1o.geopulse.streaming.service.trips.TripWaterStatistics;
+// FORK: Google Timeline placeID naming
+import org.github.tess1o.geopulse.geocoding.googleplaces.service.GooglePlaceNameResolver;
+import org.github.tess1o.geopulse.streaming.service.googleplace.GooglePlaceIdStayResolver;
 import org.locationtech.jts.geom.Point;
 
 import java.time.Duration;
@@ -42,6 +45,15 @@ public class TimelineEventFinalizationService {
 
     @Inject
     TripWaterClassificationService tripWaterClassificationService;
+
+    // FORK: Google Timeline placeID naming. Both are optional collaborators - they are null in the
+    // plain-Mockito unit tests that construct this service with only LocationPointResolver mocked,
+    // and every call site null-guards accordingly.
+    @Inject
+    GooglePlaceIdStayResolver googlePlaceIdStayResolver;
+
+    @Inject
+    GooglePlaceNameResolver googlePlaceNameResolver;
 
     /**
      * Finalize a stay event from user state without location resolution.
@@ -141,8 +153,66 @@ public class TimelineEventFinalizationService {
             }
         }
 
+        // FORK: overlay Google Places names where we have them. Deliberately after the batch
+        // resolution above and not instead of it - the geocodingId that resolution sets is what
+        // GeographicInsightService COALESCEs city/country out of, and the geocoding cache makes
+        // repeat resolutions cheap, so skipping it would cost more than it saves.
+        applyGooglePlaceNames(staysToPopulate, userId);
+
         long duration = System.currentTimeMillis() - startTime;
         log.info("Populated location data for {} stays in {} ms", staysToPopulate.size(), duration);
+    }
+
+    /**
+     * FORK: replace geocoded street addresses with real POI names where a Google Timeline export
+     * gave us a placeID for the stay's time window.
+     * <p>
+     * Precedence is favorite -> Google placeID -> geocoding -> external geocoder. Favorites are
+     * skipped entirely: a favorite is an explicit human override ("Home"), and a placeID is machine
+     * derived and will happily label a house with whatever business shares its address.
+     */
+    private void applyGooglePlaceNames(List<Stay> stays, UUID userId) {
+        if (googlePlaceIdStayResolver == null || googlePlaceNameResolver == null || userId == null) {
+            return;
+        }
+
+        try {
+            Map<Integer, String> placeIdsByIndex = googlePlaceIdStayResolver.resolveForStays(userId, stays);
+            if (placeIdsByIndex.isEmpty()) {
+                return;
+            }
+
+            Map<String, String> namesByPlaceId = googlePlaceNameResolver.resolveNames(placeIdsByIndex.values());
+            if (namesByPlaceId.isEmpty()) {
+                return;
+            }
+
+            int applied = 0;
+            for (Map.Entry<Integer, String> entry : placeIdsByIndex.entrySet()) {
+                Stay stay = stays.get(entry.getKey());
+
+                // Favorite wins outright - do not touch the name, and do not claim the placeID.
+                if (stay.getFavoriteId() != null && stay.getFavoriteId() != 0) {
+                    continue;
+                }
+
+                String name = namesByPlaceId.get(entry.getValue());
+                if (name == null || name.isBlank()) {
+                    continue;
+                }
+
+                stay.setLocationName(name);
+                stay.setGooglePlaceId(entry.getValue());
+                applied++;
+            }
+
+            log.info("Applied Google Places names to {} of {} stays", applied, stays.size());
+
+        } catch (Exception e) {
+            // Naming is an enhancement. If Google is unreachable or the schema is not migrated yet,
+            // the geocoded names already set above stand and timeline generation carries on.
+            log.warn("Google Places stay naming failed, falling back to geocoded names: {}", e.getMessage());
+        }
     }
 
     /**

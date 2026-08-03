@@ -309,6 +309,7 @@ public class StreamingGoogleTimelineParser {
         String placeLocation = null;
         String semanticType = "unknown";
         double confidence = 0.0;
+        String placeId = null; // FORK: Google placeID for this visit
 
         // Parser is already at START_OBJECT, no need to advance
 
@@ -331,6 +332,10 @@ public class StreamingGoogleTimelineParser {
                         } else if ("semanticType".equals(tcField)) {
                             parser.nextToken();
                             semanticType = parser.getValueAsString();
+                        } else if (isPlaceIdField(tcField)) {
+                            // FORK: legacy exports spell it "placeID", newer ones "placeId"
+                            parser.nextToken();
+                            placeId = parser.getValueAsString();
                         } else {
                             parser.skipChildren();
                         }
@@ -344,7 +349,7 @@ public class StreamingGoogleTimelineParser {
         double[] coords = parseGeoString(placeLocation);
         if (coords != null && startTime != null && endTime != null) {
             List<GoogleTimelineGpsPoint> visitPoints = interpolateVisitPoints(
-                    startTime, endTime, coords[0], coords[1], semanticType, confidence);
+                    startTime, endTime, coords[0], coords[1], semanticType, confidence, placeId);
 
             for (GoogleTimelineGpsPoint point : visitPoints) {
                 stats.totalGpsPoints++;
@@ -587,6 +592,7 @@ public class StreamingGoogleTimelineParser {
         String latLng = null;
         String semanticType = "unknown";
         double confidence = 0.0;
+        String placeId = null; // FORK: Google placeID for this visit
 
         parser.nextToken(); // START_OBJECT
 
@@ -616,6 +622,10 @@ public class StreamingGoogleTimelineParser {
                         } else if ("semanticType".equals(tcField)) {
                             parser.nextToken();
                             semanticType = parser.getValueAsString();
+                        } else if (isPlaceIdField(tcField)) {
+                            // FORK: "placeId" here, "placeID" in the legacy format
+                            parser.nextToken();
+                            placeId = parser.getValueAsString();
                         } else {
                             parser.skipChildren();
                         }
@@ -629,7 +639,7 @@ public class StreamingGoogleTimelineParser {
         double[] coords = parseGeoString(latLng);
         if (coords != null && startTime != null && endTime != null) {
             List<GoogleTimelineGpsPoint> visitPoints = interpolateVisitPoints(
-                    startTime, endTime, coords[0], coords[1], semanticType, confidence);
+                    startTime, endTime, coords[0], coords[1], semanticType, confidence, placeId);
 
             for (GoogleTimelineGpsPoint point : visitPoints) {
                 stats.totalGpsPoints++;
@@ -961,7 +971,8 @@ public class StreamingGoogleTimelineParser {
     private static List<GoogleTimelineGpsPoint> interpolateVisitPoints(
             Instant startTime, Instant endTime,
             double latitude, double longitude,
-            String placeName, double confidence) {
+            String placeName, double confidence,
+            String placeId) { // FORK: carried onto every emitted visit point
 
         List<GoogleTimelineGpsPoint> points = new ArrayList<>();
         long durationMinutes = ChronoUnit.MINUTES.between(startTime, endTime);
@@ -977,6 +988,8 @@ public class StreamingGoogleTimelineParser {
                     .activityType(placeName)
                     .confidence(confidence)
                     .velocityMs(0.0)
+                    .placeId(placeId)
+                    .syntheticVisitPoint(true)
                     .build());
 
             // Add end point if it's different from start
@@ -989,6 +1002,8 @@ public class StreamingGoogleTimelineParser {
                         .activityType(placeName)
                         .confidence(confidence)
                         .velocityMs(0.0)
+                        .placeId(placeId)
+                        .syntheticVisitPoint(true)
                         .build());
             }
             return points;
@@ -1005,6 +1020,8 @@ public class StreamingGoogleTimelineParser {
                     .activityType(placeName)
                     .confidence(confidence)
                     .velocityMs(0.0)
+                    .placeId(placeId)
+                    .syntheticVisitPoint(true)
                     .build());
 
             currentTime = currentTime.plus(VISIT_INTERPOLATION_INTERVAL_MINUTES, ChronoUnit.MINUTES);
@@ -1022,10 +1039,21 @@ public class StreamingGoogleTimelineParser {
                         .activityType(placeName)
                         .confidence(confidence)
                         .velocityMs(0.0)
+                        .placeId(placeId)
+                        .syntheticVisitPoint(true)
                         .build());
             }
         }
 
         return points;
+    }
+
+    /**
+     * FORK: the two Google Timeline export generations disagree on the casing of the visit place
+     * identifier - the legacy array format emits "placeID", the semantic-segments format "placeId".
+     * Accept either wherever a visit topCandidate is parsed.
+     */
+    private static boolean isPlaceIdField(String fieldName) {
+        return "placeID".equals(fieldName) || "placeId".equals(fieldName);
     }
 }

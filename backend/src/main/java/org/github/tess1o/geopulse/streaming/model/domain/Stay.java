@@ -40,6 +40,12 @@ public class Stay implements TimelineEvent {
      */
     private Long geocodingId;
 
+    /**
+     * FORK: Google placeID whose POI name won for this stay. Set only when a Google name actually
+     * beat the geocoded one - null for favorites and for stays named by the geocoder chain.
+     */
+    private String googlePlaceId;
+
     @Override
     public TimelineEventType getType() {
         return TimelineEventType.STAY;

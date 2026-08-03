@@ -18,5 +18,11 @@ public enum LocationSource {
     /**
      * Location name preserved from a deleted favorite (historical name)
      */
-    HISTORICAL
+    HISTORICAL,
+
+    /**
+     * FORK: Location name comes from the Google Places API, resolved from the placeID a Google
+     * Timeline export attached to the visit. Ranks below FAVORITE and above GEOCODING.
+     */
+    GOOGLE_PLACE
 }

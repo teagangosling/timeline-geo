@@ -1,0 +1,134 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
+
+#app { display: flex; flex-direction: row-reverse; height: 100%; }
+
+#panel {
+  width: 340px;
+  flex-shrink: 0;
+  background: #14161a;
+  color: #e6e6e6;
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+#panel h1 {
+  margin: 0 0 12px;
+  font-size: 1.1em;
+  color: #fff;
+}
+
+#map { flex-grow: 1; position: relative; }
+
+@media (max-width: 768px) {
+  #app { flex-direction: column-reverse; }
+
+  #panel {
+    width: 100%;
+    max-height: 50%;
+  }
+
+  #map { flex-grow: 1; min-height: 40%; }
+}
+
+#last-updated {
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid #3a3f47;
+  color: #9aa0aa;
+  font-size: 0.8em;
+}
+
+.hidden { display: none !important; }
+
+.hint { color: #9aa0aa; font-size: 0.9em; }
+
+#stats-subtabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.stats-subtab {
+  flex: 1;
+  background: #1d2027;
+  border: 1px solid #3a3f47;
+  color: #9aa0aa;
+  border-radius: 4px;
+  padding: 6px;
+  cursor: pointer;
+  font-size: 0.85em;
+}
+
+.stats-subtab.active {
+  color: #fff;
+  border-color: #2b6cb0;
+  background: #24344a;
+}
+
+.stats-controls {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.stats-controls select {
+  flex: 1;
+  background: #24272e;
+  border: 1px solid #3a3f47;
+  color: #e6e6e6;
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+
+.stats-period {
+  background: #1d2027;
+  border-radius: 4px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.9em;
+  padding: 3px 0;
+}
+
+.stat-modes {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid #3a3f47;
+}
+
+.stat-mode-row {
+  color: #9aa0aa;
+  font-size: 0.85em;
+}
+
+.stats-countries { cursor: pointer; }
+
+.stats-countries > span:first-child::after {
+  content: " \25be";
+  color: #9aa0aa;
+  font-size: 0.8em;
+}
+
+.stats-country-list {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid #3a3f47;
+  color: #9aa0aa;
+  font-size: 0.85em;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.maplibregl-popup-content {
+  background: #1d2027;
+  color: #e6e6e6;
+  font-size: 0.85em;
+}

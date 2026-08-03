@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Travel Stats</title>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <aside id="panel">
+      <h1>Travel Stats</h1>
+      <div id="stats-subtabs">
+        <button class="stats-subtab active" data-substats="year">By Year</button>
+        <button class="stats-subtab" data-substats="all">All Time</button>
+      </div>
+      <div id="stats-year-controls" class="stats-controls">
+        <select id="stats-year-select"></select>
+      </div>
+      <div id="stats-content"></div>
+      <div id="last-updated"></div>
+    </aside>
+    <div id="map"></div>
+  </div>
+  <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

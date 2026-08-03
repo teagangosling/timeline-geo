@@ -72,6 +72,14 @@ public class TimelineStayEntity {
     private ReverseGeocodingLocationEntity geocodingLocation;
 
     /**
+     * FORK: Google placeID that produced this stay's location name, when a Google Places name won.
+     * Null for every other naming source. Kept so PendingGooglePlaceLookupScheduler can backfill a
+     * better name later without re-deriving the placeID from GPS points.
+     */
+    @Column(name = "google_place_id")
+    private String googlePlaceId;
+
+    /**
      * When this timeline entry was created
      */
     @Column(name = "created_at", nullable = false)

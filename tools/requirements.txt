@@ -1,0 +1,20 @@
+# Dependencies for tools/migrate_legacy.py and tools/fetch_city_photos.py.
+# These are one-shot / occasional maintenance scripts run from a workstation;
+# nothing in the GeoPulse backend or public-app depends on this file.
+#
+#   python -m venv tools/.venv
+#   tools/.venv/Scripts/python -m pip install -r tools/requirements.txt
+
+psycopg[binary]>=3.1
+
+# fetch_city_photos.py only.
+#
+# curl_cffi is NOT interchangeable with requests or httpx. Wikimedia's edge
+# fingerprints the TLS handshake and 403s plain Python HTTP clients no matter
+# what User-Agent they send. curl_cffi impersonates Chrome's fingerprint.
+curl_cffi>=0.7
+
+# Nearest-known-city lookup. The retired app used this exact library to build
+# the `city_photos` lookup keys; using anything else would produce keys that
+# miss every migrated cache row.
+reverse_geocoder>=1.5
