@@ -253,6 +253,21 @@ public class SystemSettingsService {
         SETTING_DEFINITIONS.put("gps.merge.min-segment-buckets",
                 new SettingDefinition("geopulse.gps.merge.min-segment-buckets", "3", ValueType.INTEGER, "gps",
                         "Minimum authoritative-source run length in 5-minute buckets (hysteresis; 3 = 15 minutes)"));
+
+        // FORK (WS-1): Google Places name resolution. Registered rather than left to fall through to
+        // MP Config: an unregistered key logs "Unknown setting key" on every lookup, and the lookup
+        // runs once per stay batch, so a full regeneration emitted thousands of warnings. Registering
+        // also makes both values editable in the admin panel.
+        //
+        // The API key is deliberately NOT here: it is billable per request, and system_settings is
+        // admin-readable and travels in every database dump. It stays in the environment only, as
+        // GEOPULSE_GOOGLE_PLACES_API_KEY.
+        SETTING_DEFINITIONS.put("google-places.enabled",
+                new SettingDefinition("geopulse.google-places.enabled", "false", ValueType.BOOLEAN, "geocoding",
+                        "Resolve stay names from Google Timeline placeIDs via the Places API (billable per request)"));
+        SETTING_DEFINITIONS.put("google-places.monthly-quota",
+                new SettingDefinition("geopulse.google-places.monthly-quota", "10000", ValueType.INTEGER, "geocoding",
+                        "Hard cap on billable Place Details requests per calendar month (UTC)"));
     }
 
     @Inject

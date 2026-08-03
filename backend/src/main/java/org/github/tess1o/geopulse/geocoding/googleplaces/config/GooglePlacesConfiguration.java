@@ -19,11 +19,12 @@ import org.github.tess1o.geopulse.admin.service.SystemSettingsService;
  * is read from the {@code GEOPULSE_GOOGLE_PLACES_API_KEY} environment variable only. There is no
  * code path that can write it, read it back over the admin API, or carry it into a backup.
  * <p>
- * The two non-secret settings are looked up through {@link SystemSettingsService} so an admin can
- * override them in the database, but they are <em>not</em> registered in that class's
- * {@code SETTING_DEFINITIONS} map - registering them would mean editing an upstream file for no
- * functional gain. An unregistered key returns an empty string, so the env/default fallback is
- * applied here instead.
+ * The two non-secret settings are looked up through {@link SystemSettingsService} and <em>are</em>
+ * registered in that class's {@code SETTING_DEFINITIONS} map, so they are editable in the admin
+ * panel. They were originally left unregistered to avoid touching an upstream file, but an
+ * unregistered key logs "Unknown setting key" on every lookup, and the lookup runs once per stay
+ * batch - a full timeline regeneration emitted thousands of warnings. {@link #resolve} still falls
+ * back to MP Config and then to the defaults here, so the environment can override either value.
  */
 @ApplicationScoped
 @Transactional(Transactional.TxType.REQUIRES_NEW)

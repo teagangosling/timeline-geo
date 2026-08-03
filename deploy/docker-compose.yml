@@ -64,6 +64,9 @@ services:
       # system_settings: that table is admin-panel editable and rides along in
       # every database dump. See FORK.md.
       GEOPULSE_GOOGLE_PLACES_API_KEY: ${GEOPULSE_GOOGLE_PLACES_API_KEY}
+      # Off by default in code because it is billable. The migrated place-name
+      # cache means almost every lookup is a cache hit, not a request.
+      GEOPULSE_GOOGLE_PLACES_ENABLED: ${GEOPULSE_GOOGLE_PLACES_ENABLED:-false}
     volumes:
       - ./keys:/app/keys
       - ./import-drop:/data/geopulse-import
