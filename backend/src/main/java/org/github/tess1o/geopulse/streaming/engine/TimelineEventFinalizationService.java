@@ -256,7 +256,8 @@ public class TimelineEventFinalizationService {
         GPSPoint lastPoint = tripPath.getLast();
 
         Duration tripDuration = Duration.between(firstPoint.getTimestamp(), lastPoint.getTimestamp());
-        double totalDistance = calculateTripDistance(tripPath);
+        // FORK (WS-2): real fixes only - see syntheticSafeDistance.
+        double totalDistance = syntheticSafeDistance(tripPath);
         TripGpsStatistics gpsStatistics = gpsStatisticsCalculator.calculateStatistics(tripPath);
         TripWaterStatistics waterStatistics = calculateWaterStatistics(tripPath, config);
         TripType tripType = travelClassification.classifyTravelType(gpsStatistics, waterStatistics, tripDuration, Double.valueOf(totalDistance).longValue(), config);
@@ -301,7 +302,8 @@ public class TimelineEventFinalizationService {
         GPSPoint lastPoint = tripPath.getLast();
 
         Duration tripDuration = Duration.between(firstPoint.getTimestamp(), lastPoint.getTimestamp());
-        double totalDistance = calculateTripDistance(tripPath);
+        // FORK (WS-2): real fixes only - see syntheticSafeDistance.
+        double totalDistance = syntheticSafeDistance(tripPath);
         TripGpsStatistics gpsStatistics = gpsStatisticsCalculator.calculateStatistics(tripPath);
         TripWaterStatistics waterStatistics = calculateWaterStatistics(tripPath, config);
         TripType tripType = travelClassification.classifyTravelType(gpsStatistics, waterStatistics, tripDuration, Double.valueOf(totalDistance).longValue(), config);
@@ -336,7 +338,32 @@ public class TimelineEventFinalizationService {
         if (filtered.size() >= 2) {
             return filtered;
         }
+        // Fewer than two real fixes: keep the original list so the trip still has endpoints and a
+        // duration. Its DISTANCE must not come from this list - see syntheticSafeDistance.
         return tripPath;
+    }
+
+    /**
+     * FORK (WS-2): trip distance measured over real GPS fixes only, never synthetic Google visit
+     * centroids.
+     *
+     * <p>Split out from {@link #withoutSyntheticVisitPoints} because filtering the path is not
+     * enough on its own. A Google export can contain two visits covering the SAME time range in
+     * different cities; the parser synthesises a 5-minute point series for each, and they interleave
+     * at identical timestamps. The stay/trip splitter then emits a two-point "trip" for every hop
+     * between them - and with BOTH endpoints synthetic, a filtered-path fallback hands back the
+     * original pair and measures the full intercity distance.
+     *
+     * <p>Individually those look harmless (Victoria to Toronto is only ~3,400 km), but
+     * {@code AbstractTripAlgorithm.mergeTrips} sums the segments it merges, so ~56 of them became a
+     * single 179,389 km trip with 7 km of actual displacement.
+     *
+     * <p>Zero is the right answer for such a trip: a run of visit centroids is evidence that
+     * somebody stayed still, not that they travelled. Real journeys are unaffected - Google records
+     * those as activity segments, whose points are not synthetic.
+     */
+    private double syntheticSafeDistance(List<GPSPoint> tripPath) {
+        return GoogleSyntheticPointFilter.distanceMetersExcludingSynthetic(tripPath);
     }
 
     /**

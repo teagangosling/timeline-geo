@@ -101,6 +101,38 @@ class GoogleSyntheticPointFilterTest {
         return total;
     }
 
+    @Test
+    @DisplayName("an all-synthetic hop measures zero, not the distance between the two centroids")
+    void allSyntheticHopMeasuresZero() {
+        // Regression for the overlapping-visit artefact. A Google export can hold two visits
+        // covering the same time range in different cities; the parser synthesises a point series
+        // for each and they interleave, so the splitter emits two-point "trips" whose BOTH ends are
+        // synthetic. Victoria -> Toronto, ~3,400 km apart.
+        List<GPSPoint> hop = List.of(
+                synthetic(0, 48.4552, -123.3754),
+                synthetic(0, 43.6562, -79.4356)
+        );
+
+        // Filtering leaves nothing real, so an implementation that falls back to the unfiltered
+        // path would measure the full intercity distance here.
+        assertEquals(0, GoogleSyntheticPointFilter.excludeSyntheticVisitPoints(hop).size());
+        assertEquals(0.0, GoogleSyntheticPointFilter.distanceMetersExcludingSynthetic(hop), 0.001);
+    }
+
+    @Test
+    @DisplayName("one real fix among synthetic centroids still measures zero")
+    void singleRealPointMeasuresZero() {
+        // A lone real fix cannot evidence movement either - there is no second point to move to.
+        List<GPSPoint> path = List.of(
+                synthetic(0, 48.4552, -123.3754),
+                real(300, 48.4560, -123.3760),
+                synthetic(600, 43.6562, -79.4356)
+        );
+
+        assertEquals(1, GoogleSyntheticPointFilter.excludeSyntheticVisitPoints(path).size());
+        assertEquals(0.0, GoogleSyntheticPointFilter.distanceMetersExcludingSynthetic(path), 0.001);
+    }
+
     private static GPSPoint real(int secondsOffset, double latitude, double longitude) {
         return GPSPoint.builder()
                 .timestamp(START.plusSeconds(secondsOffset))
