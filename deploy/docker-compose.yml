@@ -221,7 +221,18 @@ services:
     group_add:
       - "${DOCKER_SOCK_GID:-110}"
     environment:
-      WEBHOOK_SECRET: ${DEPLOY_WEBHOOK_SECRET}
+      # `:?` for the same reason the geopulse_app password uses it. An unset
+      # variable substitutes to an empty string rather than being absent, and an
+      # empty HMAC key means anyone who can reach the endpoint can sign a
+      # request that passes verification.
+      WEBHOOK_SECRET: ${DEPLOY_WEBHOOK_SECRET:?deploy webhook secret is required}
+      # The fork's work lands on teagan/main; origin/main still tracks upstream.
+      # Read by both server.py (which push to accept) and deploy.sh (which
+      # branch to check out).
+      DEPLOY_BRANCH: ${DEPLOY_BRANCH:-teagan/main}
+      # Must match the project name of the running stack, or deploy.sh aborts
+      # rather than bring Postgres up against a fresh, empty volume.
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-geopulse}
     volumes:
       - ..:/repo
       - /var/run/docker.sock:/var/run/docker.sock
