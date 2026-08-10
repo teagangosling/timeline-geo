@@ -29,10 +29,17 @@ else
   DEFAULT_RESOLVER="${SYSTEM_NAMESERVERS:-8.8.8.8}"
 fi
 : "${OSM_RESOLVER:=${DEFAULT_RESOLVER}}"
+: "${BACKEND_RESOLVER:=${DEFAULT_RESOLVER}}"
+
+# The /api/ block builds its upstream as $geopulse_backend$request_uri, so a
+# trailing slash here would double up as //api/... Strip it.
+BACKEND_URL="${GEOPULSE_BACKEND_URL:-http://geopulse-backend:8080}"
+BACKEND_URL="${BACKEND_URL%/}"
 
 # Replace placeholders
 # We are modifying the fresh copy we just made from the template
-sed -i "s|BACKEND_URL_PLACEHOLDER|${GEOPULSE_BACKEND_URL:-http://geopulse-backend:8080}|g" /etc/nginx/conf.d/default.conf
+sed -i "s|BACKEND_URL_PLACEHOLDER|${BACKEND_URL}|g" /etc/nginx/conf.d/default.conf
+sed -i "s|BACKEND_RESOLVER_PLACEHOLDER|${BACKEND_RESOLVER}|g" /etc/nginx/conf.d/default.conf
 sed -i "s|CLIENT_MAX_BODY_SIZE_PLACEHOLDER|${CLIENT_MAX_BODY_SIZE:-200M}|g" /etc/nginx/conf.d/default.conf
 sed -i "s|OSM_RESOLVER_PLACEHOLDER|${OSM_RESOLVER}|g" /etc/nginx/conf.d/default.conf
 sed -i "s|NGINX_PORT_PLACEHOLDER|${NGINX_PORT}|g" /etc/nginx/conf.d/default.conf
