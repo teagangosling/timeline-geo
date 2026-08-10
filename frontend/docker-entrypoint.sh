@@ -22,14 +22,23 @@ echo "  API_BASE_URL: '/api'," >> /app/config/config.js
 echo "};" >> /app/config/config.js
 
 # Detect Resolver
+#
+# The two resolvers are deliberately NOT the same. nginx treats a resolver list
+# as a pool and spreads queries across it, so a public resolver in the BACKEND
+# list NXDOMAINs the container name on whatever share of re-resolutions land on
+# it -- intermittent "geopulse-backend could not be resolved (3: Host not found)"
+# and a 502, every valid= interval. The backend name only ever exists in Docker's
+# embedded DNS; keep the public fallback for OSM tiles, which are a real hostname.
 if grep -q "127.0.0.11" /etc/resolv.conf; then
-  DEFAULT_RESOLVER="127.0.0.11 8.8.8.8"
+  OSM_DEFAULT_RESOLVER="127.0.0.11 8.8.8.8"
+  BACKEND_DEFAULT_RESOLVER="127.0.0.11"
 else
   SYSTEM_NAMESERVERS=$(grep '^nameserver' /etc/resolv.conf | awk '{if ($2 ~ ":") print "["$2"]"; else print $2}' | paste -sd " " -)
-  DEFAULT_RESOLVER="${SYSTEM_NAMESERVERS:-8.8.8.8}"
+  OSM_DEFAULT_RESOLVER="${SYSTEM_NAMESERVERS:-8.8.8.8}"
+  BACKEND_DEFAULT_RESOLVER="${SYSTEM_NAMESERVERS:-8.8.8.8}"
 fi
-: "${OSM_RESOLVER:=${DEFAULT_RESOLVER}}"
-: "${BACKEND_RESOLVER:=${DEFAULT_RESOLVER}}"
+: "${OSM_RESOLVER:=${OSM_DEFAULT_RESOLVER}}"
+: "${BACKEND_RESOLVER:=${BACKEND_DEFAULT_RESOLVER}}"
 
 # The /api/ block builds its upstream as $geopulse_backend$request_uri, so a
 # trailing slash here would double up as //api/... Strip it.
