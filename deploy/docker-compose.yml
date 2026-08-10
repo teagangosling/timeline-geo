@@ -37,13 +37,18 @@ services:
           command -v openssl >/dev/null 2>&1 || apk add --no-cache openssl
           openssl genpkey -algorithm RSA -out /keys/jwt-private-key.pem
           openssl rsa -pubout -in /keys/jwt-private-key.pem -out /keys/jwt-public-key.pem
-          chmod 644 /keys/jwt-private-key.pem /keys/jwt-public-key.pem
         fi
         if [ ! -f /keys/ai-encryption-key.txt ]; then
           command -v openssl >/dev/null 2>&1 || apk add --no-cache openssl
           openssl rand -base64 32 > /keys/ai-encryption-key.txt
-          chmod 644 /keys/ai-encryption-key.txt
         fi
+        # The private JWT key and the AI encryption key are secrets: 0600, and
+        # owned by the backend image's appuser (1001), not the host user, so no
+        # local account other than root can read them. Applied unconditionally
+        # so an already-generated 0644 key from an older run gets corrected.
+        chown 1001:1001 /keys/jwt-private-key.pem /keys/jwt-public-key.pem /keys/ai-encryption-key.txt
+        chmod 600 /keys/jwt-private-key.pem /keys/ai-encryption-key.txt
+        chmod 644 /keys/jwt-public-key.pem
 
   geopulse-backend:
     build:
@@ -60,6 +65,21 @@ services:
       - .env
     environment:
       GEOPULSE_POSTGRES_URL: jdbc:postgresql://${GEOPULSE_POSTGRES_HOST}:${GEOPULSE_POSTGRES_PORT}/${GEOPULSE_POSTGRES_DB}
+      # NOT the ${GEOPULSE_POSTGRES_USERNAME} the postgres service boots with.
+      # That role is the cluster's bootstrap superuser and Postgres refuses to
+      # demote it ("the bootstrap superuser must have the SUPERUSER attribute"),
+      # so any SQL injection reachable from this app would have run as superuser
+      # - writing files, creating roles, and reading straight past the
+      # geopulse_ro privilege boundary the public app depends on.
+      # geopulse_app has no role attributes at all. It owns every application
+      # table in schema public and holds CREATE on the schema, which is all
+      # Flyway needs to keep migrating. The tradeoff: a future migration adding
+      # CREATE EXTENSION will fail, because that needs superuser. The extensions
+      # in use (postgis, postgis_topology, btree_gist, fuzzystrmatch,
+      # postgis_tiger_geocoder) are already installed, so nothing today needs
+      # it; if upstream ever adds one, install it once by hand as `geopulse`.
+      GEOPULSE_POSTGRES_USERNAME: ${GEOPULSE_POSTGRES_APP_USER:-geopulse_app}
+      GEOPULSE_POSTGRES_PASSWORD: ${GEOPULSE_POSTGRES_APP_PASSWORD:?geopulse_app password is required}
       # Billable secret. Deliberately an env var rather than a row in
       # system_settings: that table is admin-panel editable and rides along in
       # every database dump. See FORK.md.
@@ -109,14 +129,24 @@ services:
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
-    env_file:
-      - .env
+    # Deliberately NOT `env_file: .env`. This is a static-asset nginx container;
+    # its entrypoint only substitutes the two placeholders below. Loading the
+    # whole .env put the Postgres passwords, the read-only DB password, the
+    # deploy webhook secret and the billable Google Places key into the
+    # environment of an internet-facing container that has no use for any of
+    # them - readable by anything that gets code execution in it.
+    environment:
+      GEOPULSE_BACKEND_URL: ${GEOPULSE_BACKEND_URL:-http://geopulse-backend:8080}
+      CLIENT_MAX_BODY_SIZE: ${CLIENT_MAX_BODY_SIZE:-200M}
     depends_on:
       geopulse-backend:
         condition: service_healthy
     networks:
       - default
-      - nginx-reverse-proxy
+      - edge-web
+      # Home Assistant pushes live phone GPS to the app through this pair-net,
+      # so the feed never has to traverse the public edge.
+      - ha-geopulse
 
   geopulse-postgres:
     image: postgis/postgis:17-3.5
@@ -174,7 +204,7 @@ services:
       TILE_STYLE_URL: ${TILE_STYLE_URL}
     networks:
       - default
-      - nginx-reverse-proxy
+      - edge-web
 
   # Listens for the GitHub push webhook via the Cloudflare Tunnel and rebuilds
   # on a push to the fork's default branch. Talks to the host docker daemon
@@ -201,12 +231,22 @@ services:
       - ${DEPLOY_WEBHOOK_SSH_DIR:-./deploy-webhook-ssh}:/home/deploy/.ssh:ro
     networks:
       - default
-      - nginx-reverse-proxy
+      - webhook-ingress
 
 volumes:
   geopulse-db-data:
 
+# The flat nginx-reverse-proxy network was retired: every container on it could
+# reach every other one. These are tiers instead - cloudflared is the only
+# container that joins more than one, and each pair-net has exactly two members.
 networks:
   default:
-  nginx-reverse-proxy:
+  # Public edge: cloudflared -> the two internet-facing HTTP services.
+  edge-web:
+    external: true
+  # Pair-net, Home Assistant <-> geopulse-ui only.
+  ha-geopulse:
+    external: true
+  # Pair-net, cloudflared -> deploy webhook only.
+  webhook-ingress:
     external: true
