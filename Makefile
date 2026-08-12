@@ -23,7 +23,7 @@ endef
 
 # Build both backend and frontend images for multiple architectures
 .PHONY: all
-all: build-backend-jvm build-backend-native build-frontend openapi publish-helm
+all: build-backend-jvm build-backend-native build-frontend openapi
 .PHONY: build-all
 build-all: build-backend-jvm build-backend-native build-frontend
 
@@ -172,22 +172,11 @@ openapi:
 	cp -v backend/target/openapi/* docs/openapi/
 	@echo "✅ OpenAPI spec copied to docs/openapi/"
 
-.PHONY: publish-helm
-publish-helm:
-	@echo "📦 Packaging Helm chart..."
-	helm package helm/geopulse -d charts
-
-	@echo "🧩 Updating Helm repo index..."
-	helm repo index charts --url https://tess1o.github.io/geopulse/charts --merge charts/index.yaml
-
-	@echo "📂 Copying charts to docs-website static directory..."
-	mkdir -p docs-website/static/charts
-	cp -r charts/* docs-website/static/charts/
-
-	@echo "🚀 Deploying documentation with Helm charts..."
-	cd docs-website && GIT_USER=tess1o npm run deploy
-
-	@echo "✅ Helm charts and documentation published successfully!"
+# FORK: publish-helm removed. It packaged the chart into charts/, merged it into
+# a repo index at tess1o.github.io, and deployed it to upstream's GitHub Pages as
+# GIT_USER=tess1o - all of it publishing to accounts this fork does not own and
+# must never push to. This fork publishes no chart repo and no images; it builds
+# from source via deploy/docker-compose.yml.
 
 # Backend unit tests
 .PHONY: backend-test-unit

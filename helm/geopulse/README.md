@@ -4,25 +4,27 @@ A self-hosted location tracking and analysis platform with PostGIS and optional 
 
 ## Quick Start
 
-```bash
-# Add the Helm repository
-helm repo add geopulse https://tess1o.github.io/geopulse/charts
-helm repo update
+> **This fork publishes no Helm repository and no container images.** Upstream's
+> `tess1o.github.io/geopulse/charts` repo serves upstream's chart and upstream's
+> images, none of which contain this fork's changes. Install from the chart in
+> this tree instead, against images you have built yourself — see
+> `deploy/docker-compose.yml`, which is how this fork is actually deployed.
 
-# Install GeoPulse
-helm install geopulse geopulse/geopulse
+```bash
+# Install from this checkout
+helm install geopulse ./helm/geopulse
 
 # Or install with custom values
-helm install geopulse geopulse/geopulse -f custom-values.yaml
+helm install geopulse ./helm/geopulse -f custom-values.yaml
 ```
 
 ## Documentation
 
 For comprehensive documentation, please visit:
 
-- **[Kubernetes Deployment Guide](https://tess1o.github.io/geopulse/docs/getting-started/deployment/kubernetes-helm)** - Step-by-step deployment instructions
-- **[Helm Chart Documentation](https://tess1o.github.io/geopulse/docs/getting-started/deployment/helm)** - Chart overview and examples
-- **[Helm Configuration Guide](https://tess1o.github.io/geopulse/docs/getting-started/deployment/helm-configuration-guide)** - Complete configuration reference
+- **[Kubernetes Deployment Guide](https://github.com/teagangosling/timeline-geo/tree/teagan/main/docs/getting-started/deployment/kubernetes-helm)** - Step-by-step deployment instructions
+- **[Helm Chart Documentation](https://github.com/teagangosling/timeline-geo/tree/teagan/main/docs/getting-started/deployment/helm)** - Chart overview and examples
+- **[Helm Configuration Guide](https://github.com/teagangosling/timeline-geo/tree/teagan/main/docs/getting-started/deployment/helm-configuration-guide)** - Complete configuration reference
 
 ## Essential Configuration
 
@@ -115,7 +117,7 @@ A mount is only visible to the container it is declared on, so a volume shared b
 | `postgres.persistence.enabled` | Enable PostgreSQL persistence | `true` |
 | `postgres.persistence.size` | PostgreSQL storage size | `10Gi` |
 
-For the complete list of parameters, see the [values.yaml](values.yaml) file or visit the [Helm Configuration Guide](https://tess1o.github.io/geopulse/docs/getting-started/deployment/helm-configuration-guide).
+For the complete list of parameters, see the [values.yaml](values.yaml) file or visit the [Helm Configuration Guide](https://github.com/teagangosling/timeline-geo/tree/teagan/main/docs/getting-started/deployment/helm-configuration-guide).
 
 ## Features
 
@@ -139,9 +141,9 @@ For the complete list of parameters, see the [values.yaml](values.yaml) file or 
 
 ## Support
 
-- **Documentation**: https://tess1o.github.io/geopulse/docs
-- **Issues**: https://github.com/tess1o/geopulse/issues
-- **Source Code**: https://github.com/tess1o/geopulse
+- **Documentation**: https://github.com/teagangosling/timeline-geo/tree/teagan/main/docs
+- **Issues**: https://github.com/teagangosling/timeline-geo/issues
+- **Source Code**: https://github.com/teagangosling/timeline-geo
 
 ## License
 

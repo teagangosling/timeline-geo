@@ -118,10 +118,10 @@ NEXT STEPS
 4. Start tracking your location data!
 
 For detailed setup instructions, visit:
-  https://github.com/tess1o/geopulse/tree/main/docs
+  https://github.com/teagangosling/timeline-geo/tree/main/docs
 
 For support and issues:
-  https://github.com/tess1o/geopulse/issues
+  https://github.com/teagangosling/timeline-geo/issues
 
 --------------------------------------------------------------------------------
 TROUBLESHOOTING

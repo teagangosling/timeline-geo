@@ -182,6 +182,6 @@ else
     echo -e "${RED}Installation failed!${NC}"
     echo ""
     echo "Check the error messages above and try again."
-    echo "For help, visit: https://github.com/tess1o/geopulse/issues"
+    echo "For help, visit: https://github.com/teagangosling/timeline-geo/issues"
     exit 1
 fi

@@ -11,10 +11,10 @@ keywords:
   - postgis
   - mqtt
   - self-hosted
-home: https://github.com/tess1o/geopulse
+home: https://github.com/teagangosling/timeline-geo
 sources:
-  - https://github.com/tess1o/geopulse
+  - https://github.com/teagangosling/timeline-geo
 maintainers:
   - name: GeoPulse Team
     email: support@geopulse.io
-icon: https://raw.githubusercontent.com/tess1o/geopulse/main/frontend/public/geopulse-logo.svg
+icon: https://raw.githubusercontent.com/teagangosling/timeline-geo/teagan/main/frontend/public/geopulse-logo.svg
